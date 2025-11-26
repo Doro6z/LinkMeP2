@@ -1,0 +1,30 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/*
+!Build/*.target.cs
+
+# Ignore user-specific files
+*.opensdf
+*.sdf
+*.suo
+*.cache
+*.pdb
+*.obj
+*.log
+*.tlog
+
+# Ignore Rider and VS
+.vscode/
+.idea/
+*.user
+*.userprefs
+*.csproj
+*.sln
+*.sln.DotSettings
+
+# Ignore temporary
+Thumbs.db
+.DS_Store
