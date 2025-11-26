@@ -48,7 +48,8 @@ void ManageRopeLength(float DeltaTime);
 void ApplyForcesToPlayer();
 void UpdateRopeVisual();
 bool LineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
-void OnHookImpact(const FHitResult& Hit);
+    UFUNCTION()
+    void OnHookImpact(const FHitResult& Hit);
 void TransitionToAttached(const FHitResult& Hit);
 
 protected:

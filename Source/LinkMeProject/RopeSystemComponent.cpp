@@ -71,7 +71,7 @@ CurrentHook = GetWorld()->SpawnActor<ARopeHookActor>(HookClass, SpawnLocation, S
 if (CurrentHook)
 {
 CurrentHook->Fire(Direction);
-CurrentHook->OnHookImpact.AddUObject(this, &UAC_RopeSystem::OnHookImpact);
+    CurrentHook->OnHookImpact.AddDynamic(this, &UAC_RopeSystem::OnHookImpact);
 RopeState = ERopeState::Flying;
 BendPoints.Reset();
 }
@@ -146,9 +146,9 @@ BendPoints.Last() = PlayerPos;
 
 void UAC_RopeSystem::ManageRopeLength(float DeltaTime)
 {
-UE_UNUSED(DeltaTime);
+    (void)DeltaTime;
 
-float RopeLength = 0.f;
+    float RopeLength = 0.f;
 for (int32 Index = 0; Index < BendPoints.Num() - 1; ++Index)
 {
 RopeLength += (BendPoints[Index + 1] - BendPoints[Index]).Size();
