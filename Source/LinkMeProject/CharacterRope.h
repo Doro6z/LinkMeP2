@@ -13,34 +13,33 @@
 	UCLASS()
 class LINKMEPROJECT_API ACharacterRope : public ACharacter
 {
-	GENERATED_BODY()
+GENERATED_BODY()
 
 public:
-	ACharacterRope();
+ACharacterRope();
 
 protected:
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera")
+USpringArmComponent* SpringArm;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera")
-	USpringArmComponent* SpringArm;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera")
-	UCameraComponent* Camera;
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera")
+UCameraComponent* Camera;
 
 /** Cosmetic rope rendering (purely client-side). */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
-	URopeRenderComponent* RopeRenderComponent;
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
+URopeRenderComponent* RopeRenderComponent;
 
 /** Gameplay rope brain. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
-	UAC_RopeSystem* RopeSystem;
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
+UAC_RopeSystem* RopeSystem;
 
-	virtual void BeginPlay() override;
+virtual void BeginPlay() override;
 
-	// Override pour clamp pitch
-	virtual void AddControllerPitchInput(float Value) override;
+// Override pour clamp pitch
+virtual void AddControllerPitchInput(float Value) override;
 
 public:
-	virtual void Tick(float DeltaTime) override;
+virtual void Tick(float DeltaTime) override;
 
-	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 };
