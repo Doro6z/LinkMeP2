@@ -10,7 +10,7 @@
 #include "RopeSystemComponent.h"
 #include "CharacterRope.generated.h"
 
-UCLASS()
+	UCLASS()
 class LINKMEPROJECT_API ACharacterRope : public ACharacter
 {
 GENERATED_BODY()
