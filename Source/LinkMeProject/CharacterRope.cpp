@@ -9,8 +9,14 @@ ACharacterRope::ACharacterRope()
 	PrimaryActorTick.bCanEverTick = true;
 
 	// ---------------------------------------------------------------------
-	// SPRING ARM — caméra orbitale usuelle
+	// RENDER + GAMEPLAY ROPE COMPONENTS
 	// ---------------------------------------------------------------------
+	RopeRenderComponent = CreateDefaultSubobject<URopeRenderComponent>(TEXT("RopeRenderComponent"));
+	RopeSystem = CreateDefaultSubobject<UAC_RopeSystem>(TEXT("RopeSystem"));
+
+// ---------------------------------------------------------------------
+// SPRING ARM — caméra orbitale usuelle
+// ---------------------------------------------------------------------
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(GetCapsuleComponent());
 
