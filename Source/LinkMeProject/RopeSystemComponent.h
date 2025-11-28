@@ -124,9 +124,29 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
 	int32 ConstraintIterations = 2;
 
-	/** Minimum angle change to extract a bend point from particles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	float BendAngleThreshold = 20.0f;
+        /** Minimum angle change to extract a bend point from particles */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
+        float BendAngleThreshold = 20.0f;
+
+        /** Minimum distance between fixed bend points (prevents tiny jittery segments). */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        float MinSegmentLength = 120.f;
+
+        /** Cooldown after adding a bend point before another can be added. */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        float WrapCooldown = 0.12f;
+
+        /** Cooldown after removing a bend point before another can be removed. */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        float UnwrapCooldown = 0.12f;
+
+        /** Dot threshold used when deciding if the player crossed the unwrapping plane. */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        float UnwrapDotThreshold = 0.35f;
+
+        /** Maximum number of bend points to avoid runaway wrapping in chaotic scenes. */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        int32 MaxBendPoints = 12;
 
 	/** Show debug lines and spheres for gameplay validation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Debug")
@@ -149,13 +169,15 @@ public:
 protected:
 	// --- Internal Logic ---
 
-	// Verlet simulation
-	void InitializeSimulation();
-	void StepSimulation(float DeltaTime);
-	void ExtractBendPoints();
+        // Verlet simulation
+        void InitializeSimulation();
+        void StepSimulation(float DeltaTime);
+        void ExtractBendPoints();
 
-	// Legacy (now unused, kept for reference)
-	void ManageBendPointsOld();
+        // Bend point management
+        void ManageBendPoints(float DeltaTime);
+        bool SweepForHit(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
+        void RefineImpactPoint(const FVector& Start, const FVector& End, FVector& OutPoint, FVector& OutNormal) const;
 	
 	void ManageRopeLength(float DeltaTime);
 	void ApplyForcesToPlayer();
@@ -182,11 +204,16 @@ protected:
 	ARopeHookActor* CurrentHook = nullptr;
 
 	UPROPERTY(Transient)
-	URopeRenderComponent* RenderComponent = nullptr;
+        URopeRenderComponent* RenderComponent = nullptr;
 
-	float DefaultBrakingDeceleration = 0.f;
+        float DefaultBrakingDeceleration = 0.f;
 
-	// Verlet simulation particles
-	TArray<FRopeParticle> SimParticles;
-	bool bNeedsReinitialize = true;
+        // Bend point helpers
+        float WrapCooldownTimer = 0.f;
+        float UnwrapCooldownTimer = 0.f;
+        FVector LastPlayerLocation = FVector::ZeroVector;
+
+        // Verlet simulation particles
+        TArray<FRopeParticle> SimParticles;
+        bool bNeedsReinitialize = true;
 };

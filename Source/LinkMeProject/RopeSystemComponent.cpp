@@ -46,19 +46,11 @@ TransitionToAttached(CurrentHook->GetImpactResult());
 }
 }
 
-	if (RopeState == ERopeState::Attached)
-	{
-		// New Verlet-based collision detection system
-		if (SimParticles.Num() == 0 || bNeedsReinitialize)
-		{
-			InitializeSimulation();
-			bNeedsReinitialize = false;
-		}
-		
-		StepSimulation(DeltaTime);
-		ExtractBendPoints();
-		
-		ApplyForcesToPlayer();
+if (RopeState == ERopeState::Attached)
+{
+                ManageBendPoints(DeltaTime);
+
+                ApplyForcesToPlayer();
 		
 		if (GEngine)
 		{
@@ -158,14 +150,125 @@ BendPoints.Add(Owner->GetActorLocation());
 
 CurrentLength = FMath::Min(MaxLength, (Owner->GetActorLocation() - BendPoints[0]).Size());
 RopeState = ERopeState::Attached;
-bNeedsReinitialize = true; // Trigger Verlet initialization
+LastPlayerLocation = Owner->GetActorLocation();
+WrapCooldownTimer = 0.f;
+UnwrapCooldownTimer = 0.f;
+bNeedsReinitialize = true; // Trigger Verlet initialization if the old system is re-enabled later
 }
 
 void URopeSystemComponent::ManageRopeLength(float DeltaTime)
 {
-	// Logic merged into ApplyForcesToPlayer to avoid duplicate forces and ensure correct wrapping handling.
-	// This function is kept empty to avoid compilation errors if called from Tick, 
-	// but should be removed from Tick in the next step.
+        // Logic merged into ApplyForcesToPlayer to avoid duplicate forces and ensure correct wrapping handling.
+        // This function is kept empty to avoid compilation errors if called from Tick,
+        // but should be removed from Tick in the next step.
+}
+
+void URopeSystemComponent::ManageBendPoints(float DeltaTime)
+{
+        AActor* Owner = GetOwner();
+        if (!Owner || BendPoints.Num() == 0)
+        {
+                return;
+        }
+
+        // Cooldowns avoid oscillations when hugging corners.
+        WrapCooldownTimer = FMath::Max(0.f, WrapCooldownTimer - DeltaTime);
+        UnwrapCooldownTimer = FMath::Max(0.f, UnwrapCooldownTimer - DeltaTime);
+
+        const FVector PlayerPos = Owner->GetActorLocation();
+        if (LastPlayerLocation.IsNearlyZero())
+        {
+                LastPlayerLocation = PlayerPos;
+        }
+
+        // Guarantee the last element is always the player location.
+        if (BendPoints.Num() == 1)
+        {
+                BendPoints.Add(PlayerPos);
+        }
+        else
+        {
+                BendPoints.Last() = PlayerPos;
+        }
+
+        // Early out if the rope somehow lost its anchor.
+        if (BendPoints.Num() < 2)
+        {
+                return;
+        }
+
+        const int32 LastFixedIndex = BendPoints.Num() - 2;
+        const FVector LastFixedPoint = BendPoints[LastFixedIndex];
+
+        // --- Wrapping: find a new bend between the last fixed point and the player ---
+        if (WrapCooldownTimer <= 0.f && BendPoints.Num() < MaxBendPoints)
+        {
+                FHitResult Hit;
+                if (SweepForHit(LastFixedPoint, PlayerPos, Hit))
+                {
+                        const float ImpactDistance = FVector::Distance(LastFixedPoint, Hit.ImpactPoint);
+                        const FVector IncomingDir = (PlayerPos - LastFixedPoint).GetSafeNormal();
+                        const float AngleFromNormal = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(-IncomingDir, Hit.ImpactNormal), -1.f, 1.f)));
+
+                        const bool bLongEnough = ImpactDistance > MinSegmentLength;
+                        const bool bCornerSharpEnough = AngleFromNormal >= CornerThresholdDegrees;
+
+                        if (bLongEnough && bCornerSharpEnough)
+                        {
+                                FVector RefinedPoint = Hit.ImpactPoint;
+                                FVector RefinedNormal = Hit.ImpactNormal;
+                                RefineImpactPoint(LastFixedPoint, PlayerPos, RefinedPoint, RefinedNormal);
+
+                                const FVector BendPoint = RefinedPoint + RefinedNormal * BendOffset;
+                                BendPoints.Insert(BendPoint, BendPoints.Num() - 1);
+
+                                WrapCooldownTimer = WrapCooldown;
+                                UnwrapCooldownTimer = FMath::Max(UnwrapCooldownTimer, WrapCooldown * 0.5f); // avoid instant unwrap
+
+                                if (bShowDebug)
+                                {
+                                        DrawDebugSphere(GetWorld(), BendPoint, 15.f, 12, FColor::Magenta, false, 0.1f, 0, 2.f);
+                                        DrawDebugLine(GetWorld(), LastFixedPoint, BendPoint, FColor::Yellow, false, 0.2f, 0, 2.f);
+                                }
+                        }
+                }
+        }
+
+        // --- Unwrapping: remove the latest bend once the player crosses the plane and regains sight ---
+        if (BendPoints.Num() > 2 && UnwrapCooldownTimer <= 0.f)
+        {
+                const FVector LastBend = BendPoints[BendPoints.Num() - 2];
+                const FVector PreviousFixed = BendPoints[BendPoints.Num() - 3];
+
+                FHitResult VisibilityHit;
+                const bool bBlocked = SweepForHit(PlayerPos, PreviousFixed, VisibilityHit);
+
+                const float Dot = FVector::DotProduct((PlayerPos - LastBend).GetSafeNormal(), (PreviousFixed - LastBend).GetSafeNormal());
+                const bool bCrossedPlane = Dot > UnwrapDotThreshold;
+
+                if (!bBlocked && bCrossedPlane)
+                {
+                        BendPoints.RemoveAt(BendPoints.Num() - 2);
+                        UnwrapCooldownTimer = UnwrapCooldown;
+                        WrapCooldownTimer = FMath::Max(WrapCooldownTimer, UnwrapCooldown * 0.5f);
+
+                        if (bShowDebug)
+                        {
+                                DrawDebugSphere(GetWorld(), PreviousFixed, 18.f, 12, FColor::Blue, false, 0.1f, 0, 2.f);
+                        }
+                }
+        }
+
+        // Recompute current length from fixed bend points (gameplay length authority)
+        CurrentLength = 0.f;
+        for (int32 i = 0; i < BendPoints.Num() - 1; ++i)
+        {
+                CurrentLength += FVector::Distance(BendPoints[i], BendPoints[i + 1]);
+        }
+
+        CurrentLength = FMath::Min(CurrentLength, MaxLength);
+
+        LastPlayerLocation = PlayerPos;
 }
 
 void URopeSystemComponent::ApplyForcesToPlayer()
@@ -400,7 +503,7 @@ void URopeSystemComponent::StepSimulation(float DeltaTime)
 
 void URopeSystemComponent::ExtractBendPoints()
 {
-	if (SimParticles.Num() < 2) return;
+        if (SimParticles.Num() < 2) return;
 	
 	TArray<FVector> NewBendPoints;
 	
@@ -504,7 +607,47 @@ void URopeSystemComponent::ExtractBendPoints()
 		
 		GEngine->AddOnScreenDebugMessage(14, 0.f, FColor::White, 
 			FString::Printf(TEXT("Total Bend Points: %d | Particles: %d"), BendPoints.Num(), SimParticles.Num()));
-	}
+        }
+}
+
+bool URopeSystemComponent::SweepForHit(const FVector& Start, const FVector& End, FHitResult& OutHit) const
+{
+        if (!GetWorld())
+        {
+                return false;
+        }
+
+        FCollisionQueryParams Params(SCENE_QUERY_STAT(RopeSweep), false, GetOwner());
+        Params.AddIgnoredActor(CurrentHook);
+
+        const FCollisionShape Sphere = FCollisionShape::MakeSphere(RopeRadius);
+        return GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_Visibility, Sphere, Params);
+}
+
+void URopeSystemComponent::RefineImpactPoint(const FVector& Start, const FVector& End, FVector& OutPoint, FVector& OutNormal) const
+{
+        FVector SegmentStart = Start;
+        FVector SegmentEnd = End;
+        OutPoint = End;
+        OutNormal = FVector::UpVector;
+
+        // A few iterations of binary search along the swept segment to find a stable contact point.
+        for (int32 Iter = 0; Iter < 4; ++Iter)
+        {
+                FHitResult Hit;
+                if (SweepForHit(SegmentStart, SegmentEnd, Hit))
+                {
+                        OutPoint = Hit.ImpactPoint;
+                        OutNormal = Hit.ImpactNormal;
+
+                        // Shrink search range towards the impact to converge.
+                        SegmentEnd = Hit.ImpactPoint - Hit.ImpactNormal * RopeRadius;
+                }
+                else
+                {
+                        SegmentStart = (SegmentStart + SegmentEnd) * 0.5f;
+                }
+        }
 }
 
 // ========== OLD BEND POINT SYSTEM (Legacy, for reference) ==========
