@@ -7,9 +7,9 @@ ARdmRopeTestCharacter::ARdmRopeTestCharacter()
     PrimaryActorTick.bCanEverTick = false;
 
     RopeRenderComponent = CreateDefaultSubobject<URopeRenderComponent>(TEXT("RopeRender"));
-    RopeRenderComponent->SetupAttachment(GetMesh());
 
-    RopeSystem = CreateDefaultSubobject<UAC_RopeSystem>(TEXT("RopeSystem"));
+
+    RopeSystem = CreateDefaultSubobject<URopeSystemComponent>(TEXT("RopeSystem"));
 }
 
 void ARdmRopeTestCharacter::BeginPlay()

@@ -8,19 +8,20 @@
 
 ARopeHookActor::ARopeHookActor()
 {
-PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = true;
 
-USphereComponent* Sphere = CreateDefaultSubobject<USphereComponent>(TEXT("HookCollision"));
-Sphere->InitSphereRadius(12.f);
-Sphere->SetSimulatePhysics(true);
-Sphere->SetNotifyRigidBodyCollision(true);
-Sphere->SetCollisionProfileName(TEXT("PhysicsActor"));
-Sphere->OnComponentHit.AddDynamic(this, &ARopeHookActor::HandleHookImpact);
-CollisionComponent = Sphere;
+	USphereComponent* Sphere = CreateDefaultSubobject<USphereComponent>(TEXT("HookCollision"));
+	Sphere->InitSphereRadius(12.f);
+	Sphere->SetSimulatePhysics(true);
+	Sphere->SetNotifyRigidBodyCollision(true);
+	Sphere->SetCollisionProfileName(TEXT("PhysicsActor"));
+	Sphere->OnComponentHit.AddDynamic(this, &ARopeHookActor::HandleHookImpact);
+	CollisionComponent = Sphere;
+	RootComponent = Sphere; // IMPORTANT: Set as root for physics to work
 
-HookMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HookMesh"));
-HookMesh->SetupAttachment(CollisionComponent);
-HookMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HookMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HookMesh"));
+	HookMesh->SetupAttachment(CollisionComponent);
+	HookMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void ARopeHookActor::BeginPlay()
@@ -35,25 +36,60 @@ Super::Tick(DeltaTime);
 
 void ARopeHookActor::Fire(const FVector& Direction)
 {
-if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(CollisionComponent))
-{
-Primitive->AddImpulse(Direction.GetSafeNormal() * LaunchImpulse, NAME_None, true);
-}
+	UE_LOG(LogTemp, Warning, TEXT("Hook Fire called with Direction: %s"), *Direction.ToString());
+	if (CollisionComponent)
+	{
+		CollisionComponent->AddImpulse(Direction * LaunchImpulse);
+		UE_LOG(LogTemp, Warning, TEXT("Impulse applied: %f"), LaunchImpulse);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("CollisionComponent is null in Fire!"));
+	}
 }
 
 void ARopeHookActor::HandleHookImpact(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
 {
-if (bImpacted)
-{
-return;
-}
+	UE_LOG(LogTemp, Warning, TEXT("HandleHookImpact called! Hit actor: %s, Hit component: %s"), 
+		OtherActor ? *OtherActor->GetName() : TEXT("NULL"), 
+		OtherComp ? *OtherComp->GetName() : TEXT("NULL"));
 
-bImpacted = true;
-ImpactResult = Hit;
-OnHookImpact.Broadcast(Hit);
+	if (bImpacted) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Already impacted, ignoring."));
+		return;
+	}
 
-if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(CollisionComponent))
-{
-Primitive->SetSimulatePhysics(false);
-}
+	bImpacted = true;
+	ImpactResult = Hit;
+
+	// Stop physics
+	if (CollisionComponent)
+	{
+		CollisionComponent->SetSimulatePhysics(false);
+		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		UE_LOG(LogTemp, Warning, TEXT("Physics stopped on hook."));
+	}
+
+	// Attach to hit object (only if it's not us!)
+	if (Hit.Component.IsValid() && Hit.Component.Get() != CollisionComponent)
+	{
+		AttachToComponent(Hit.Component.Get(), FAttachmentTransformRules::KeepWorldTransform, Hit.BoneName);
+		UE_LOG(LogTemp, Warning, TEXT("Hook attached to: %s"), *Hit.Component->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Cannot attach to hit component (null or self)"));
+	}
+
+	// Notify listeners
+	if (OnHookImpact.IsBound())
+	{
+		OnHookImpact.Broadcast(Hit);
+		UE_LOG(LogTemp, Warning, TEXT("OnHookImpact broadcasted!"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("OnHookImpact has no listeners!"));
+	}
 }

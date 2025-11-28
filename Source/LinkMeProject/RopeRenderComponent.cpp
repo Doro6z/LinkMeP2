@@ -2,52 +2,110 @@
 
 #include "RopeRenderComponent.h"
 #include "GameFramework/Actor.h"
+#include "Components/InstancedStaticMeshComponent.h"
 
 URopeRenderComponent::URopeRenderComponent()
 {
-PrimaryComponentTick.bCanEverTick = false; // driven manually by owning rope system
+	PrimaryComponentTick.bCanEverTick = false; // driven manually by owning rope system
 }
 
 void URopeRenderComponent::BeginPlay()
 {
-Super::BeginPlay();
+	Super::BeginPlay();
+
+	// Create ISMC for rope visual
+	RopeMeshComponent = NewObject<UInstancedStaticMeshComponent>(GetOwner(), UInstancedStaticMeshComponent::StaticClass(), TEXT("RopeMeshISMC"));
+	if (RopeMeshComponent)
+	{
+		RopeMeshComponent->RegisterComponent();
+		RopeMeshComponent->AttachToComponent(GetOwner()->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+		RopeMeshComponent->SetUsingAbsoluteLocation(true); // Fix: Render in World Space
+		RopeMeshComponent->SetUsingAbsoluteRotation(true);
+		RopeMeshComponent->SetUsingAbsoluteScale(true);
+		RopeMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RopeMeshComponent->SetCastShadow(false);
+	}
 }
 
 void URopeRenderComponent::RefreshFromBendPoints(const TArray<FVector>& InBendPoints)
 {
-BendPoints = InBendPoints;
-BuildVerletPoints();
+	BendPoints = InBendPoints;
+	BuildVerletPoints();
 }
 
 void URopeRenderComponent::Simulate(float DeltaTime)
 {
-if (VerletPoints.Num() == 0)
-{
-RenderPoints.Reset();
-return;
+	if (VerletPoints.Num() == 0)
+	{
+		RenderPoints.Reset();
+		if (RopeMeshComponent) RopeMeshComponent->ClearInstances();
+		return;
+	}
+
+	const FVector Gravity = FVector(0.f, 0.f, GetWorld() ? GetWorld()->GetGravityZ() * GravityScale : -980.f * GravityScale);
+
+	for (FVerletPoint& Point : VerletPoints)
+	{
+		const FVector Velocity = (Point.Position - Point.LastPosition) * Damping;
+		const FVector NewPosition = Point.Position + Velocity + Gravity * DeltaTime * DeltaTime;
+		Point.LastPosition = Point.Position;
+		Point.Position = NewPosition;
+	}
+
+	for (int32 Iter = 0; Iter < SolverIterations; ++Iter)
+	{
+		SatisfyConstraints();
+	}
+
+	RenderPoints.SetNum(VerletPoints.Num());
+	for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
+	{
+		RenderPoints[Index] = VerletPoints[Index].Position;
+	}
+
+	// Update visual mesh instances
+	UpdateRopeVisual();
 }
 
-const FVector Gravity = FVector(0.f, 0.f, GetWorld() ? GetWorld()->GetGravityZ() * GravityScale : -980.f * GravityScale);
-
-for (FVerletPoint& Point : VerletPoints)
+void URopeRenderComponent::UpdateRopeVisual()
 {
-const FVector Velocity = (Point.Position - Point.LastPosition) * Damping;
-const FVector NewPosition = Point.Position + Velocity + Gravity * DeltaTime * DeltaTime;
-Point.LastPosition = Point.Position;
-Point.Position = NewPosition;
+	if (!RopeMeshComponent || !RopeMesh || RenderPoints.Num() < 2)
+	{
+		if (RopeMeshComponent) RopeMeshComponent->ClearInstances();
+		return;
+	}
+
+	// Set mesh if not already set
+	if (RopeMeshComponent->GetStaticMesh() != RopeMesh)
+	{
+		RopeMeshComponent->SetStaticMesh(RopeMesh);
+	}
+
+	RopeMeshComponent->ClearInstances();
+
+	// Create cylinder instance between each pair of points
+	for (int32 i = 0; i < RenderPoints.Num() - 1; ++i)
+	{
+		const FVector Start = RenderPoints[i];
+		const FVector End = RenderPoints[i + 1];
+		const FVector Mid = (Start + End) * 0.5f;
+		const float Length = FVector::Distance(Start, End);
+
+		if (Length < 0.1f) continue; // Skip very short segments
+
+		const FVector Dir = (End - Start).GetSafeNormal();
+		const FRotator Rot = Dir.Rotation();
+
+		FTransform InstanceTransform;
+		InstanceTransform.SetLocation(Mid);
+		InstanceTransform.SetRotation(Rot.Quaternion());
+		InstanceTransform.SetScale3D(FVector(RopeThickness, RopeThickness, Length / 100.f)); // Assuming mesh is 100 units tall
+
+		RopeMeshComponent->AddInstance(InstanceTransform);
+	}
 }
 
-for (int32 Iter = 0; Iter < SolverIterations; ++Iter)
-{
-SatisfyConstraints();
-}
 
-RenderPoints.SetNum(VerletPoints.Num());
-for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
-{
-RenderPoints[Index] = VerletPoints[Index].Position;
-}
-}
 
 void URopeRenderComponent::BuildVerletPoints()
 {

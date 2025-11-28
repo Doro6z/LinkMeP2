@@ -6,6 +6,15 @@ Saved/
 Build/*
 !Build/*.target.cs
 
+# Documentation (keep local only)
+Docs/
+# But track these critical project files
+!Docs/DebugCommands.md
+!Docs/SystemValidation.md
+!Docs/TestPlan.md
+!Docs/TestSessionTemplate.md
+!Docs/TestSession1.md
+
 # Ignore user-specific files
 *.opensdf
 *.sdf

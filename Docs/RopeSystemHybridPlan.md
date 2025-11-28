@@ -156,14 +156,59 @@ Créer un `URopeDataAsset` exposant :
 - `CosmeticSegments`, `SolverIterations`, `GravityScale`, `Damping` (pour le solver client).
 - `UnknotTime` pour les mécaniques de nœuds.
 
-## 7. Extensions/Gameplay (alignés avec le GDD)
+## 7. Advanced Mechanics Analysis (User Request 2025-11-27)
+
+### 7.1. The "Fun & Constraining" Challenge
+The goal is a rope that feels physical (trails, wraps) but works in MP (18 players).
+**Problem**: Full physics engines (Chaos/PhysX) are non-deterministic and expensive to replicate. Syncing 18 physics ropes over network is a nightmare (bandwidth + jitter).
+
+### 7.2. The Solution: "Taut-Wrap / Slack-Sag" Hybrid
+We separate the rope into two states managed by our custom system:
+
+#### A. The Logical Rope (Server - Authority)
+*   **Representation**: `TArray<FVector> BendPoints`.
+*   **Behavior**:
+    *   **Slack**: The server considers the rope a straight line (or simple curve) but applies **NO forces**. It does **NOT** generate bend points on geometry (too complex to wrap loose rope).
+    *   **Taut**: When `CurrentLength <= Distance`, the rope becomes a "Guitar String". It applies forces and **generates Bend Points** (wrapping) via Line Traces.
+*   **Grabbing**: To grab another player's rope, we don't use collision. We use **Math**.
+    *   When Player B tries to grab, we iterate Player A's `BendPoints`.
+    *   We calculate `FMath::PointDistToSegment` for each segment.
+    *   If distance < Threshold, we register a "Grab".
+
+#### B. The Visual Rope (Client - Cosmetic)
+*   **Representation**: `URopeRenderComponent` (Verlet Integration).
+*   **Behavior**:
+    *   **Slack**: Gravity pulls the particles down. It looks like it's trailing/sagging.
+    *   **Taut**: Tension pulls particles straight.
+    *   **Result**: The player *sees* a trailing rope, but the server only cares about the tension points. This is the "Smoke & Mirrors" used in games like *Uncharted* or *The Last of Us*.
+
+### 7.3. Modular Attachment (Back vs Hand)
+*   **Sockets**: The `RopeSystem` should not assume `ActorLocation`.
+*   **Implementation**:
+    *   Add `FName AttachSocketName` to `URopeSystemComponent`.
+    *   Default to "SpineSocket" (Back pulley).
+    *   When player presses "Grab Rope" input -> Interp `AttachSocketName` to "HandSocket".
+    *   The `GetRopeOrigin()` function uses this socket.
+
+### 7.4. Multiplayer Scalability
+*   **Cost**:
+    *   Server: Raycasts only when moving fast/wrapping. Very cheap.
+    *   Client: Verlet sim is O(N) points. 18 ropes * 50 points = 900 points. Trivial for modern CPU/GPU.
+    *   Bandwidth: We only replicate `BendPoints` (Array of vectors). Efficient.
+
+### 7.5. Implementation Roadmap
+1.  **Refine Wrapping**: Ensure `ManageBendPoints` is robust (Done/In Progress).
+2.  **Dynamic Origin**: Replace `GetActorLocation()` with `GetSocketLocation(SocketName)`.
+3.  **Interaction**: Create `TryGrabRope()` function that checks all `URopeSystemComponent` in world.
+
+## 8. Extensions/Gameplay (alignés avec le GDD)
 
 - **Super nœud** : plusieurs cordes qui se croisent fusionnent en « nœud gordien » nécessitant plusieurs joueurs pour être défait. Augmente tension et devient un point de contrôle du round.
 - **Bobine visible** : mesh de roue sur le dos qui grossit quand la corde se rembobine (feedback lisible en stream). Peut servir de jauge de longueur.
 - **Momentum Attack** : charge de rotation qui réduit temporairement `CurrentLength` puis libère une impulsion (catapulte d'allié ou hook boosté).
 - **Power-ups** : items ciseaux (coupe globale), « +/- longueur » (ajuste `MaxLength`/`CurrentLength`), buff d'élasticité pour des swings plus longs.
 
-## 8. Pourquoi cette approche ?
+## 9. Pourquoi cette approche ?
 
 - Évite les chaînes 100 % physiques (coûteuses et difficiles à répliquer) tout en conservant un rendu crédible.
 - Sépare nettement gameplay déterministe (squelette) et jus visuel (peau), idéal pour le multijoueur et pour créer des moments « TikTokables » sans instabilités réseau.

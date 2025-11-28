@@ -50,6 +50,9 @@ void BuildVerletPoints();
 /** Solve simple distance constraints along the chain. */
 void SatisfyConstraints();
 
+/** Update the visual mesh instances based on render points. */
+void UpdateRopeVisual();
+
 protected:
 /** Number of cosmetic segments generated between each gameplay bend point. */
 UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
@@ -63,10 +66,19 @@ float Damping = 0.96f;
 UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
 float GravityScale = 0.5f;
 
-/** How many solver iterations to run per frame. */
-UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
-int32 SolverIterations = 6;
+	/** How many solver iterations to run per frame. */
+	UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
+	int32 SolverIterations = 6;
 
+	/** Static mesh to use for rope segments (cylinder recommended). */
+	UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
+	UStaticMesh* RopeMesh = nullptr;
+
+	/** Thickness/radius of the rope visual. */
+	UPROPERTY(EditAnywhere, Category="Rope|Cosmetic")
+	float RopeThickness = 2.f;
+
+protected:
 /** Points received from gameplay (anchor to player). */
 TArray<FVector> BendPoints;
 
@@ -75,4 +87,8 @@ TArray<FVerletPoint> VerletPoints;
 
 /** Points exposed to external renderers (copy of Verlet positions). */
 TArray<FVector> RenderPoints;
+
+	/** Instanced mesh component for rendering rope segments. */
+	UPROPERTY(Transient)
+	class UInstancedStaticMeshComponent* RopeMeshComponent;
 };

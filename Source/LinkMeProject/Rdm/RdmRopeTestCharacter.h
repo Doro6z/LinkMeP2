@@ -37,5 +37,5 @@ protected:
 
     /** Gameplay rope brain. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
-    UAC_RopeSystem* RopeSystem;
+    URopeSystemComponent* RopeSystem;
 };
