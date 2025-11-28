@@ -14,6 +14,7 @@ Docs/
 !Docs/TestPlan.md
 !Docs/TestSessionTemplate.md
 !Docs/TestSession1.md
+!Docs/RopeImplementationAndTesting.md
 
 # Ignore user-specific files
 *.opensdf

@@ -85,6 +85,12 @@ TArray<FVector> BendPoints;
 /** Locally simulated verlet points. */
 TArray<FVerletPoint> VerletPoints;
 
+/** Desired rest length per verlet segment (aligned with VerletPoints pairs). */
+TArray<float> RestLengths;
+
+/** Indices in VerletPoints that must stay anchored to BendPoints. */
+TArray<int32> AnchorIndices;
+
 /** Points exposed to external renderers (copy of Verlet positions). */
 TArray<FVector> RenderPoints;
 

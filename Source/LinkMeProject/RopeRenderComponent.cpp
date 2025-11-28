@@ -109,69 +109,96 @@ void URopeRenderComponent::UpdateRopeVisual()
 
 void URopeRenderComponent::BuildVerletPoints()
 {
-VerletPoints.Reset();
+        VerletPoints.Reset();
+        RestLengths.Reset();
+        AnchorIndices.Reset();
 
-if (BendPoints.Num() < 2)
-{
-RenderPoints.Reset();
-return;
-}
+        if (BendPoints.Num() < 2)
+        {
+                RenderPoints.Reset();
+                return;
+        }
 
-for (int32 SegmentIndex = 0; SegmentIndex < BendPoints.Num() - 1; ++SegmentIndex)
-{
-const FVector& Start = BendPoints[SegmentIndex];
-const FVector& End = BendPoints[SegmentIndex + 1];
-VerletPoints.Add({Start, Start});
+        // Add the very first anchor.
+        VerletPoints.Add({BendPoints[0], BendPoints[0]});
+        AnchorIndices.Add(0);
 
-const int32 Subdivisions = FMath::Max(SubdivisionsPerSegment, 1);
-for (int32 SubIdx = 1; SubIdx <= Subdivisions; ++SubIdx)
-{
-const float Alpha = static_cast<float>(SubIdx) / static_cast<float>(Subdivisions + 1);
-const FVector Point = FMath::Lerp(Start, End, Alpha);
-VerletPoints.Add({Point, Point});
-}
-}
+        for (int32 SegmentIndex = 0; SegmentIndex < BendPoints.Num() - 1; ++SegmentIndex)
+        {
+                const FVector& Start = BendPoints[SegmentIndex];
+                const FVector& End = BendPoints[SegmentIndex + 1];
 
-// Add final end point (player side)
-VerletPoints.Add({BendPoints.Last(), BendPoints.Last()});
+                // Subdivide the interior of the segment (excluding endpoints which are anchors).
+                const int32 Subdivisions = FMath::Max(SubdivisionsPerSegment, 1);
+                for (int32 SubIdx = 1; SubIdx <= Subdivisions; ++SubIdx)
+                {
+                        const float Alpha = static_cast<float>(SubIdx) / static_cast<float>(Subdivisions + 1);
+                        const FVector Point = FMath::Lerp(Start, End, Alpha);
+                        VerletPoints.Add({Point, Point});
+                }
 
-RenderPoints.SetNum(VerletPoints.Num());
-for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
-{
-RenderPoints[Index] = VerletPoints[Index].Position;
-}
+                // Add the end point of this segment (which is also the start of the next one) and mark it as an anchor.
+                const int32 EndIndex = VerletPoints.Add({End, End});
+                AnchorIndices.Add(EndIndex);
+        }
+
+        // Compute rest lengths between all consecutive verlet points.
+        RestLengths.SetNum(FMath::Max(VerletPoints.Num() - 1, 0));
+        for (int32 Index = 0; Index < RestLengths.Num(); ++Index)
+        {
+                RestLengths[Index] = FVector::Distance(VerletPoints[Index].Position, VerletPoints[Index + 1].Position);
+        }
+
+        RenderPoints.SetNum(VerletPoints.Num());
+        for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
+        {
+                RenderPoints[Index] = VerletPoints[Index].Position;
+        }
 }
 
 void URopeRenderComponent::SatisfyConstraints()
 {
-if (VerletPoints.Num() < 2)
-{
-return;
-}
+        if (VerletPoints.Num() < 2)
+        {
+                return;
+        }
 
-// Anchor first and last to original bend endpoints for stability
-if (BendPoints.Num() >= 1)
-{
-VerletPoints[0].Position = BendPoints[0];
-}
-if (BendPoints.Num() >= 2)
-{
-VerletPoints.Last().Position = BendPoints.Last();
-}
+        // Anchor all bend points to their authoritative positions.
+        for (int32 AnchorIdx = 0; AnchorIdx < AnchorIndices.Num(); ++AnchorIdx)
+        {
+                const int32 VerletIndex = AnchorIndices[AnchorIdx];
+                if (VerletPoints.IsValidIndex(VerletIndex) && BendPoints.IsValidIndex(AnchorIdx))
+                {
+                        VerletPoints[VerletIndex].Position = BendPoints[AnchorIdx];
+                }
+        }
 
-// Enforce distance constraint between consecutive points
-for (int32 Index = 0; Index < VerletPoints.Num() - 1; ++Index)
-{
-FVerletPoint& A = VerletPoints[Index];
-FVerletPoint& B = VerletPoints[Index + 1];
+        // Enforce distance constraint between consecutive points using precomputed rest lengths.
+        for (int32 Index = 0; Index < RestLengths.Num(); ++Index)
+        {
+                FVerletPoint& A = VerletPoints[Index];
+                FVerletPoint& B = VerletPoints[Index + 1];
 
-const float Desired = FVector::Distance(A.Position, B.Position);
-const FVector Dir = (B.Position - A.Position).GetSafeNormal();
+                const float Desired = RestLengths[Index];
+                FVector Delta = B.Position - A.Position;
+                float Distance = Delta.Size();
 
-const FVector Mid = (A.Position + B.Position) * 0.5f;
-const FVector Offset = Dir * (Desired * 0.5f);
+                if (Distance < KINDA_SMALL_NUMBER)
+                {
+                        continue;
+                }
 
-A.Position = Mid - Offset;
-B.Position = Mid + Offset;
-}
+                const float Diff = (Distance - Desired) / Distance;
+                const FVector Offset = Delta * 0.5f * Diff;
+
+                // Do not move anchors; only adjust free points.
+                if (!AnchorIndices.Contains(Index))
+                {
+                        A.Position += Offset;
+                }
+                if (!AnchorIndices.Contains(Index + 1))
+                {
+                        B.Position -= Offset;
+                }
+        }
 }
