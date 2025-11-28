@@ -9,27 +9,6 @@
 class ARopeHookActor;
 class URopeRenderComponent;
 
-/** Lightweight particle for Verlet rope simulation */
-USTRUCT()
-struct FRopeParticle
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	FVector Position = FVector::ZeroVector;
-
-	UPROPERTY()
-	FVector PrevPosition = FVector::ZeroVector;
-
-	UPROPERTY()
-	bool bAnchored = false;
-
-	FRopeParticle() = default;
-	FRopeParticle(const FVector& InPos, bool bInAnchored = false)
-		: Position(InPos), PrevPosition(InPos), bAnchored(bInAnchored)
-	{}
-};
-
 UENUM(BlueprintType)
 enum class ERopeState : uint8
 {
@@ -104,29 +83,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
 	float CornerThresholdDegrees = 15.f;
 
-	/** Number of Verlet particles for simulation (more = smoother but slower) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 NumSimParticles = 12;
-
-	/** Radius for sphere sweep collision (rope thickness) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	float RopeRadius = 8.0f;
-
-	/** Gravity scale for Verlet particles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	float GravityScale = 0.3f;
-
-	/** Number of substeps per frame for Verlet stability */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 SubSteps = 2;
-
-	/** Number of constraint solver iterations */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 ConstraintIterations = 2;
-
-        /** Minimum angle change to extract a bend point from particles */
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-        float BendAngleThreshold = 20.0f;
+        /** Radius for sweep collision (rope thickness). */
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
+        float RopeRadius = 8.0f;
 
         /** Minimum distance between fixed bend points (prevents tiny jittery segments). */
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|BendPoints")
@@ -167,22 +126,16 @@ public:
 	ERopeState GetRopeState() const { return RopeState; }
 
 protected:
-	// --- Internal Logic ---
-
-        // Verlet simulation
-        void InitializeSimulation();
-        void StepSimulation(float DeltaTime);
-        void ExtractBendPoints();
+        // --- Internal Logic ---
 
         // Bend point management
         void ManageBendPoints(float DeltaTime);
         bool SweepForHit(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
         void RefineImpactPoint(const FVector& Start, const FVector& End, FVector& OutPoint, FVector& OutNormal) const;
-	
-	void ManageRopeLength(float DeltaTime);
-	void ApplyForcesToPlayer();
-	void UpdateRopeVisual();
-	bool LineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
+
+        void ApplyForcesToPlayer();
+        void UpdateRopeVisual();
+        bool LineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
 
 	UFUNCTION()
 	void OnHookImpact(const FHitResult& Hit);
@@ -212,8 +165,4 @@ protected:
         float WrapCooldownTimer = 0.f;
         float UnwrapCooldownTimer = 0.f;
         FVector LastPlayerLocation = FVector::ZeroVector;
-
-        // Verlet simulation particles
-        TArray<FRopeParticle> SimParticles;
-        bool bNeedsReinitialize = true;
 };

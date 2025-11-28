@@ -52,11 +52,11 @@ if (RopeState == ERopeState::Attached)
 
                 ApplyForcesToPlayer();
 		
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Yellow, FString::Printf(TEXT("Rope Length: %.1f / %.1f | Particles: %d | BendPoints: %d"), 
-				CurrentLength, MaxLength, SimParticles.Num(), BendPoints.Num()));
-		}
+                if (GEngine)
+                {
+                        GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Yellow, FString::Printf(TEXT("Rope Length: %.1f / %.1f | BendPoints: %d"),
+                                CurrentLength, MaxLength, BendPoints.Num()));
+                }
 	}
 
 UpdateRopeVisual();
@@ -153,14 +153,6 @@ RopeState = ERopeState::Attached;
 LastPlayerLocation = Owner->GetActorLocation();
 WrapCooldownTimer = 0.f;
 UnwrapCooldownTimer = 0.f;
-bNeedsReinitialize = true; // Trigger Verlet initialization if the old system is re-enabled later
-}
-
-void URopeSystemComponent::ManageRopeLength(float DeltaTime)
-{
-        // Logic merged into ApplyForcesToPlayer to avoid duplicate forces and ensure correct wrapping handling.
-        // This function is kept empty to avoid compilation errors if called from Tick,
-        // but should be removed from Tick in the next step.
 }
 
 void URopeSystemComponent::ManageBendPoints(float DeltaTime)
@@ -384,232 +376,6 @@ void URopeSystemComponent::UpdateRopeVisual()
 	}
 }
 
-// ========== VERLET SIMULATION SYSTEM ==========
-
-void URopeSystemComponent::InitializeSimulation()
-{
-	SimParticles.Empty();
-	
-	if (BendPoints.Num() < 2) return;
-	
-	// Create particles linearly between Anchor and Player
-	const FVector Start = BendPoints[0]; // Anchor
-	const FVector End = GetOwner()->GetActorLocation(); // Player
-	
-	const int32 NumParticles = FMath::Clamp(NumSimParticles, 4, 32);
-	
-	for (int32 i = 0; i < NumParticles; ++i)
-	{
-		const float Alpha = (float)i / (NumParticles - 1);
-		const FVector Pos = FMath::Lerp(Start, End, Alpha);
-		const bool bAnchored = (i == 0 || i == NumParticles - 1);
-		
-		SimParticles.Add(FRopeParticle(Pos, bAnchored));
-	}
-	
-	UE_LOG(LogTemp, Log, TEXT("Rope Verlet: Initialized %d particles"), SimParticles.Num());
-}
-
-void URopeSystemComponent::StepSimulation(float DeltaTime)
-{
-	if (SimParticles.Num() < 2) return;
-	
-	const float SubDelta = DeltaTime / FMath::Max(1, SubSteps);
-	const int32 NumParticles = SimParticles.Num();
-	
-	// Calculate rest length between particles
-	const float TotalDist = FVector::Dist(BendPoints[0], GetOwner()->GetActorLocation());
-	const float SegmentRestLength = TotalDist / (NumParticles - 1);
-	
-	for (int32 SubStep = 0; SubStep < SubSteps; ++SubStep)
-	{
-		// 1. Verlet Integration (gravity)
-		for (int32 i = 0; i < NumParticles; ++i)
-		{
-			if (SimParticles[i].bAnchored) continue;
-			
-			const FVector Vel = SimParticles[i].Position - SimParticles[i].PrevPosition;
-			SimParticles[i].PrevPosition = SimParticles[i].Position;
-			SimParticles[i].Position += Vel + FVector(0, 0, -980.f) * SubDelta * SubDelta * GravityScale;
-		}
-		
-		// 2. Collision Response (Sphere Sweep per particle)
-		FCollisionQueryParams Params(SCENE_QUERY_STAT(RopeVerletTrace), false, GetOwner());
-		
-		for (int32 i = 0; i < NumParticles; ++i)
-		{
-			FHitResult Hit;
-			const FVector Start = SimParticles[i].PrevPosition;
-			const FVector End = SimParticles[i].Position;
-			
-			const FCollisionShape Sphere = FCollisionShape::MakeSphere(RopeRadius);
-			
-			if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility, Sphere, Params))
-			{
-				// Push particle out of geometry
-				SimParticles[i].Position = Hit.Location + Hit.Normal * (RopeRadius + 2.f);
-				
-				// Kill velocity in collision direction (for stability)
-				SimParticles[i].PrevPosition = SimParticles[i].Position;
-			}
-		}
-		
-		// 3. Solve Distance Constraints (keep segments at rest length)
-		for (int32 Iter = 0; Iter < ConstraintIterations; ++Iter)
-		{
-			for (int32 i = 0; i < NumParticles - 1; ++i)
-			{
-				FVector Delta = SimParticles[i+1].Position - SimParticles[i].Position;
-				const float CurrentDist = Delta.Size();
-				
-				if (CurrentDist < SMALL_NUMBER) continue;
-				
-				const float Diff = (CurrentDist - SegmentRestLength) / CurrentDist;
-				const FVector Offset = Delta * 0.5f * Diff;
-				
-				if (!SimParticles[i].bAnchored)
-					SimParticles[i].Position += Offset;
-				if (!SimParticles[i+1].bAnchored)
-					SimParticles[i+1].Position -= Offset;
-			}
-		}
-	}
-	
-	// Update anchored particles to actual positions
-	SimParticles[0].Position = BendPoints[0]; // Anchor (fixed hook location)
-	SimParticles[0].PrevPosition = SimParticles[0].Position;
-	
-	SimParticles.Last().Position = GetOwner()->GetActorLocation(); // Player
-	SimParticles.Last().PrevPosition = SimParticles.Last().Position;
-	
-	// === DEBUG VISUALIZATION ===
-	if (bShowDebug)
-	{
-		// Draw all Verlet particles as small spheres
-		for (int32 i = 0; i < SimParticles.Num(); ++i)
-		{
-			FColor ParticleColor = SimParticles[i].bAnchored ? FColor::Yellow : FColor::Cyan;
-			DrawDebugSphere(GetWorld(), SimParticles[i].Position, 5.f, 8, ParticleColor, false, -1.f, 0, 1.f);
-		}
-		
-		// Draw lines between particles (the simulated rope)
-		for (int32 i = 0; i < SimParticles.Num() - 1; ++i)
-		{
-			DrawDebugLine(GetWorld(), SimParticles[i].Position, SimParticles[i+1].Position, 
-				FColor::Cyan, false, -1.f, 0, 0.5f);
-		}
-	}
-}
-
-void URopeSystemComponent::ExtractBendPoints()
-{
-        if (SimParticles.Num() < 2) return;
-	
-	TArray<FVector> NewBendPoints;
-	
-	// ALWAYS keep the first anchor point (hook location) - it's immobile
-	// This is the hit location where the hook attached
-	if (BendPoints.Num() > 0)
-	{
-		NewBendPoints.Add(BendPoints[0]); // Preserve original anchor
-		
-		if (bShowDebug && GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(10, 0.f, FColor::Green, 
-				FString::Printf(TEXT("Anchor (FIXED): %s"), *BendPoints[0].ToString()));
-		}
-	}
-	else
-	{
-		NewBendPoints.Add(SimParticles[0].Position); // Fallback
-	}
-	
-	// Check if we should remove the anchor point (angle > 180°)
-	// This happens when the player moves "behind" the hook
-	bool bAnchorRemoved = false;
-	if (SimParticles.Num() >= 3)
-	{
-		const FVector AnchorToFirst = (SimParticles[1].Position - SimParticles[0].Position).GetSafeNormal();
-		const FVector FirstToSecond = (SimParticles[2].Position - SimParticles[1].Position).GetSafeNormal();
-		
-		const float DotProd = FVector::DotProduct(AnchorToFirst, FirstToSecond);
-		const float AngleDeg = FMath::Acos(FMath::Clamp(DotProd, -1.f, 1.f)) * 57.2958f;
-		
-		if (bShowDebug && GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(11, 0.f, FColor::Orange, 
-				FString::Printf(TEXT("Anchor Angle: %.1f° (Remove if >175°)"), AngleDeg));
-		}
-		
-		// If angle > 175° (nearly backwards), the anchor is no longer relevant
-		if (AngleDeg > 175.0f)
-		{
-			// Remove anchor, direct line to player
-			NewBendPoints.Empty();
-			NewBendPoints.Add(SimParticles[0].Position);
-			NewBendPoints.Add(SimParticles.Last().Position);
-			BendPoints = NewBendPoints;
-			bAnchorRemoved = true;
-			
-			if (bShowDebug && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(12, 2.f, FColor::Red, TEXT("ANCHOR REMOVED (Angle > 175°)"));
-			}
-			
-			return;
-		}
-	}
-	
-	// Find significant direction changes in the particle chain (intermediate bend points)
-	// Start from particle 1 (skip anchor at 0)
-	int32 BendPointsFound = 0;
-	for (int32 i = 1; i < SimParticles.Num() - 1; ++i)
-	{
-		const FVector Dir1 = (SimParticles[i].Position - SimParticles[i-1].Position).GetSafeNormal();
-		const FVector Dir2 = (SimParticles[i+1].Position - SimParticles[i].Position).GetSafeNormal();
-		
-		const float DotProd = FVector::DotProduct(Dir1, Dir2);
-		const float AngleDeg = FMath::Acos(FMath::Clamp(DotProd, -1.f, 1.f)) * 57.2958f;
-		
-		if (AngleDeg > BendAngleThreshold)
-		{
-			NewBendPoints.Add(SimParticles[i].Position);
-			BendPointsFound++;
-			
-			if (bShowDebug)
-			{
-				// Draw a large sphere at bend points
-				DrawDebugSphere(GetWorld(), SimParticles[i].Position, 15.f, 12, FColor::Magenta, false, -1.f, 0, 2.f);
-			}
-		}
-	}
-	
-	// Always add player position as last point
-	NewBendPoints.Add(SimParticles.Last().Position);
-	
-	BendPoints = NewBendPoints;
-	
-	// Update CurrentLength based on total particle chain length
-	float TotalLength = 0.f;
-	for (int32 i = 0; i < SimParticles.Num() - 1; ++i)
-	{
-		TotalLength += FVector::Dist(SimParticles[i].Position, SimParticles[i+1].Position);
-	}
-	
-	// Adjust CurrentLength to match simulation (allows rope to stretch slightly under tension)
-	CurrentLength = FMath::Min(MaxLength, TotalLength);
-	
-	// === COMPREHENSIVE DEBUG OUTPUT ===
-	if (bShowDebug && GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(13, 0.f, FColor::Cyan, 
-			FString::Printf(TEXT("Intermediate Bend Points Found: %d (Threshold: %.1f°)"), BendPointsFound, BendAngleThreshold));
-		
-		GEngine->AddOnScreenDebugMessage(14, 0.f, FColor::White, 
-			FString::Printf(TEXT("Total Bend Points: %d | Particles: %d"), BendPoints.Num(), SimParticles.Num()));
-        }
-}
-
 bool URopeSystemComponent::SweepForHit(const FVector& Start, const FVector& End, FHitResult& OutHit) const
 {
         if (!GetWorld())
@@ -620,8 +386,9 @@ bool URopeSystemComponent::SweepForHit(const FVector& Start, const FVector& End,
         FCollisionQueryParams Params(SCENE_QUERY_STAT(RopeSweep), false, GetOwner());
         Params.AddIgnoredActor(CurrentHook);
 
-        const FCollisionShape Sphere = FCollisionShape::MakeSphere(RopeRadius);
-        return GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_Visibility, Sphere, Params);
+        const float HalfHeight = RopeRadius * 2.f;
+        const FCollisionShape Capsule = FCollisionShape::MakeCapsule(RopeRadius, HalfHeight);
+        return GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_Visibility, Capsule, Params);
 }
 
 void URopeSystemComponent::RefineImpactPoint(const FVector& Start, const FVector& End, FVector& OutPoint, FVector& OutNormal) const
