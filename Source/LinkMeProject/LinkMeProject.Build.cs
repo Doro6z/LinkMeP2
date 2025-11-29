@@ -9,7 +9,7 @@ public class LinkMeProject : ModuleRules
         {
                 PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-                PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore" });
+                PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore", "ProceduralMeshComponent" });
 
                 // Expose the module root so subfolders like Rdm can include headers without extra relative paths.
                 PublicIncludePaths.AddRange(new string[] { ModuleDirectory });

@@ -109,55 +109,63 @@ void URopeRenderComponent::UpdateRopeVisual()
 
 void URopeRenderComponent::BuildVerletPoints()
 {
-VerletPoints.Reset();
+	VerletPoints.Reset();
+	AnchorIndices.Reset();
 
-if (BendPoints.Num() < 2)
-{
-RenderPoints.Reset();
-return;
-}
+	if (BendPoints.Num() < 2)
+	{
+		RenderPoints.Reset();
+		return;
+	}
 
-for (int32 SegmentIndex = 0; SegmentIndex < BendPoints.Num() - 1; ++SegmentIndex)
-{
-const FVector& Start = BendPoints[SegmentIndex];
-const FVector& End = BendPoints[SegmentIndex + 1];
-VerletPoints.Add({Start, Start});
+	// Add the first anchor point (Start of the rope)
+	VerletPoints.Add({BendPoints[0], BendPoints[0]});
+	AnchorIndices.Add(0);
 
-const int32 Subdivisions = FMath::Max(SubdivisionsPerSegment, 1);
-for (int32 SubIdx = 1; SubIdx <= Subdivisions; ++SubIdx)
-{
-const float Alpha = static_cast<float>(SubIdx) / static_cast<float>(Subdivisions + 1);
-const FVector Point = FMath::Lerp(Start, End, Alpha);
-VerletPoints.Add({Point, Point});
-}
-}
+	for (int32 SegmentIndex = 0; SegmentIndex < BendPoints.Num() - 1; ++SegmentIndex)
+	{
+		const FVector& Start = BendPoints[SegmentIndex];
+		const FVector& End = BendPoints[SegmentIndex + 1];
 
-// Add final end point (player side)
-VerletPoints.Add({BendPoints.Last(), BendPoints.Last()});
+		const int32 Subdivisions = FMath::Max(SubdivisionsPerSegment, 1);
+		for (int32 SubIdx = 1; SubIdx <= Subdivisions; ++SubIdx)
+		{
+			const float Alpha = static_cast<float>(SubIdx) / static_cast<float>(Subdivisions + 1);
+			const FVector Point = FMath::Lerp(Start, End, Alpha);
+			VerletPoints.Add({Point, Point});
+		}
 
-RenderPoints.SetNum(VerletPoints.Num());
-for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
-{
-RenderPoints[Index] = VerletPoints[Index].Position;
-}
+		// Add the end point of this segment (which is the start of the next, or the player)
+		VerletPoints.Add({End, End});
+		AnchorIndices.Add(VerletPoints.Num() - 1);
+	}
+
+	RenderPoints.SetNum(VerletPoints.Num());
+	for (int32 Index = 0; Index < VerletPoints.Num(); ++Index)
+	{
+		RenderPoints[Index] = VerletPoints[Index].Position;
+	}
 }
 
 void URopeRenderComponent::SatisfyConstraints()
 {
-if (VerletPoints.Num() < 2)
-{
-return;
-}
+	if (VerletPoints.Num() < 2)
+	{
+		return;
+	}
 
-// Anchor first and last to original bend endpoints for stability
-if (BendPoints.Num() >= 1)
-{
-VerletPoints[0].Position = BendPoints[0];
-}
-if (BendPoints.Num() >= 2)
-{
-VerletPoints.Last().Position = BendPoints.Last();
-}
+	// Pin all Anchor Points to their gameplay positions
+	// AnchorIndices[i] corresponds to BendPoints[i]
+	const int32 NumAnchors = FMath::Min(AnchorIndices.Num(), BendPoints.Num());
+	
+	for (int32 i = 0; i < NumAnchors; ++i)
+	{
+		const int32 VerletIdx = AnchorIndices[i];
+		if (VerletPoints.IsValidIndex(VerletIdx))
+		{
+			VerletPoints[VerletIdx].Position = BendPoints[i];
+		}
+	}
 
 // Enforce distance constraint between consecutive points
 for (int32 Index = 0; Index < VerletPoints.Num() - 1; ++Index)

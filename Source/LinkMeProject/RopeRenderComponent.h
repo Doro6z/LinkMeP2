@@ -91,4 +91,7 @@ TArray<FVector> RenderPoints;
 	/** Instanced mesh component for rendering rope segments. */
 	UPROPERTY(Transient)
 	class UInstancedStaticMeshComponent* RopeMeshComponent;
+
+	/** Indices of Verlet points that correspond to fixed gameplay bend points. */
+	TArray<int32> AnchorIndices;
 };

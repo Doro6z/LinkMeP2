@@ -8,6 +8,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "RopeRenderComponent.h"
 #include "RopeSystemComponent.h"
+
 #include "CharacterRope.generated.h"
 
 	UCLASS()
@@ -28,7 +29,7 @@ UCameraComponent* Camera;
 	/** Cosmetic rope rendering (purely client-side). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
 	URopeRenderComponent* RopeRenderComponent;
-
+		
 	/** Aiming Component for target detection and state */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Aiming")
 	class UAimingComponent* AimingComponent;

@@ -33,9 +33,9 @@ struct FRopeParticle
 UENUM(BlueprintType)
 enum class ERopeState : uint8
 {
-Idle,
-Flying,
-Attached
+	Idle,
+	Flying,
+	Attached
 };
 
 /**
@@ -70,23 +70,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category="LinkMe|Actions")
 	void ReelOut(float DeltaTime);
 
-	// --- Configuration ---
-
-	/** Class of the projectile to spawn as the hook. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
-	TSubclassOf<ARopeHookActor> HookClass;
+	// Distance from the wall to place the bend point (prevents z-fighting/clipping)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rope System")
+	float BendOffset = 15.0f;
 
 	/** Maximum length of the rope in units. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
-	float MaxLength = 1500.f;
+	float MaxLength = 3500.f;
 
 	/** Speed at which the rope reels in/out (units per second). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
 	float ReelSpeed = 600.f;
-
-	// Distance from the wall to place the bend point (prevents z-fighting/clipping)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rope System")
-	float BendOffset = 15.0f;
 
 	/** Stiffness of the rope spring force. Higher = stiffer. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
@@ -102,35 +96,31 @@ public:
 
 	/** Minimum angle (in degrees) required to create a bend point. Prevents wrapping on flat walls. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
-	float CornerThresholdDegrees = 15.f;
+	float CornerThresholdDegrees = 5.f;
 
-	/** Number of Verlet particles for simulation (more = smoother but slower) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 NumSimParticles = 12;
+	/** Minimum length of a segment to be created. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
+	float MinSegmentLength = 20.f;
 
-	/** Radius for sphere sweep collision (rope thickness) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
+	/** Cooldown after wrapping before another wrap can occur (seconds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
+	float WrapCooldown = 0.2f;
+
+	/** Cooldown after unwrapping before another unwrap can occur (seconds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
+	float UnwrapCooldown = 0.2f;
+
+	/** Radius for sphere/capsule sweep collision (rope thickness) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Collision")
 	float RopeRadius = 8.0f;
-
-	/** Gravity scale for Verlet particles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	float GravityScale = 0.3f;
-
-	/** Number of substeps per frame for Verlet stability */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 SubSteps = 2;
-
-	/** Number of constraint solver iterations */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	int32 ConstraintIterations = 2;
-
-	/** Minimum angle change to extract a bend point from particles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Verlet")
-	float BendAngleThreshold = 20.0f;
 
 	/** Show debug lines and spheres for gameplay validation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Debug")
 	bool bShowDebug = true;
+
+	/** Class of the projectile to spawn as the hook. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
+	TSubclassOf<ARopeHookActor> HookClass;
 
 	// --- State Access ---
 
@@ -146,25 +136,44 @@ public:
 	UFUNCTION(BlueprintPure, Category="LinkMe|State")
 	ERopeState GetRopeState() const { return RopeState; }
 
+	/** Helper to get the last fixed bend point (the one before the player). */
+	FVector GetLastFixedPoint() const;
+
 protected:
 	// --- Internal Logic ---
 
-	// Verlet simulation
-	void InitializeSimulation();
-	void StepSimulation(float DeltaTime);
-	void ExtractBendPoints();
+	/** Main gameplay loop for rope logic: updates bend points, handles wrapping/unwrapping. */
+	void ManageBendPoints(float DeltaTime);
 
-	// Legacy (now unused, kept for reference)
-	void ManageBendPointsOld();
-	
-	void ManageRopeLength(float DeltaTime);
+	/** Checks if the dynamic segment hits geometry and creates a new bend point. */
+	void CheckForWrapping(float DeltaTime);
+
+	/** Checks if the last bend point should be removed (unwrapped). */
+	void CheckForUnwrapping(float DeltaTime);
+
+	/** Refines the impact point to be slightly off the wall to prevent clipping. */
+	FVector RefineImpactPoint(const FVector& Start, const FVector& End, const FHitResult& InitialHit);
+
+	/** Nouvelle version hybride : utilise triangle + edge + push-out pour créer un bend point robuste. */
+	FVector ComputeWarpBendPoint(const FVector& Start, const FVector& End, const FHitResult& Hit);
+
 	void ApplyForcesToPlayer();
 	void UpdateRopeVisual();
-	bool LineTrace(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
-
+	
 	UFUNCTION()
 	void OnHookImpact(const FHitResult& Hit);
 	void TransitionToAttached(const FHitResult& Hit);
+
+    // Legacy swing toggle
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="LinkMe|Config")
+    bool bUseLegacySwing = false;
+
+    void ApplySwingLegacy();
+
+	// --- Deprecated / Legacy Simulation (Unused) ---
+	// void InitializeSimulation();
+	// void StepSimulation(float DeltaTime);
+	// void ExtractBendPoints();
 
 protected:
 	// --- Internal State ---
@@ -186,7 +195,14 @@ protected:
 
 	float DefaultBrakingDeceleration = 0.f;
 
-	// Verlet simulation particles
-	TArray<FRopeParticle> SimParticles;
-	bool bNeedsReinitialize = true;
+	// Cooldown timers
+	float WrapCooldownTimer = 0.f;
+	float UnwrapCooldownTimer = 0.f;
+
+	// Last wrap position to prevent re-wrapping at the same spot
+	FVector LastWrapPosition = FVector::ZeroVector;
+
+	// Legacy particles (kept only if needed for compilation, but unused)
+	// TArray<FRopeParticle> SimParticles; 
+	// bool bNeedsReinitialize = true;
 };
