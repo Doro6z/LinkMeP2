@@ -21,7 +21,7 @@ enum class ERopeState : uint8
  * Lightweight rope brain: manages state, forces, and provides tools for Blueprint logic.
  * Wrap/Unwrap logic is intentionally left to Blueprint for rapid iteration.
  */
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), BlueprintType, Blueprintable)
 class LINKMEPROJECT_API URopeSystemComponent : public UActorComponent
 {
 	GENERATED_BODY()
