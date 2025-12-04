@@ -210,6 +210,7 @@ void URopeSystemComponent::UpdatePlayerPosition()
 	BendPoints.Last() = GetOwner()->GetActorLocation();
 }
 
+
 // ===================================================================
 // TRACE UTILITIES
 // ===================================================================
@@ -377,11 +378,40 @@ void URopeSystemComponent::TransitionToAttached(const FHitResult& Hit)
 	if (!Owner) return;
 
 	BendPoints.Reset();
-	BendPoints.Add(ComputeBendPointFromHit(Hit, 15.f)); // Anchor
-	BendPoints.Add(Owner->GetActorLocation()); // Player
+	
+	// Compute initial anchor position from hit
+	FVector HookImpactPoint = Hit.ImpactPoint;
+	FVector PlayerPosition = Owner->GetActorLocation();
+	
+	// Apply FindLastClearPoint to ensure anchor is not inside geometry
+	// This prevents issues when player jumps off platforms
+	FVector CorrectedAnchor = FindLastClearPoint(
+		PlayerPosition,
+		HookImpactPoint,
+		5,    // Subdivisions
+		15.f  // SphereRadius
+	);
+	
+	// Apply normal offset (similar to ComputeBendPointFromHit)
+	if (Hit.bBlockingHit && !Hit.ImpactNormal.IsNearlyZero())
+	{
+		CorrectedAnchor = CorrectedAnchor + Hit.ImpactNormal * 15.f;
+	}
+	
+	BendPoints.Add(CorrectedAnchor); // Anchor (corrected)
+	BendPoints.Add(PlayerPosition);   // Player
 
-	CurrentLength = FMath::Min(MaxLength, (Owner->GetActorLocation() - BendPoints[0]).Size());
+	CurrentLength = FMath::Min(MaxLength, (PlayerPosition - BendPoints[0]).Size());
 	RopeState = ERopeState::Attached;
+	
+	if (bShowDebug)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Hook Anchor Set: Original=%s, Corrected=%s"),
+			*HookImpactPoint.ToString(), *CorrectedAnchor.ToString());
+		
+		DrawDebugSphere(GetWorld(), HookImpactPoint, 8.f, 12, FColor::Red, false, 3.f);
+		DrawDebugSphere(GetWorld(), CorrectedAnchor, 12.f, 12, FColor::Green, false, 3.f);
+	}
 
 	OnRopeAttached(Hit);
 }
