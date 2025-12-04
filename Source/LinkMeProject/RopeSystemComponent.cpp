@@ -233,7 +233,7 @@ bool URopeSystemComponent::CapsuleSweepBetween(
 		Start,
 		End,
 		FQuat::Identity,
-		ECC_Visibility,
+		RopeTraceChannel,
 		Capsule,
 		Params
 	);
@@ -271,7 +271,7 @@ FVector URopeSystemComponent::FindLastClearPoint(
 			TestPoint,
 			TestPoint + FVector(0, 0, 1), // Minimal sweep
 			FQuat::Identity,
-			ECC_Visibility,
+			RopeTraceChannel,
 			Sphere,
 			Params
 		);

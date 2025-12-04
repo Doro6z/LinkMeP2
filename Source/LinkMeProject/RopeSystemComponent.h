@@ -164,6 +164,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Config")
 	TSubclassOf<ARopeHookActor> HookClass;
 
+	/** Trace channel used for rope collision detection. Set to custom RopeTrace channel to ignore player. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Config")
+	TEnumAsByte<ECollisionChannel> RopeTraceChannel = ECC_Visibility;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Config")
 	float MaxLength = 3500.f;
 
