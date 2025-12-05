@@ -27,9 +27,16 @@ bool HasImpacted() const { return bImpacted; }
 /** Latest impact result. */
 const FHitResult& GetImpactResult() const { return ImpactResult; }
 
-/** Broadcast when the hook hits an obstacle. */
-UPROPERTY(BlueprintAssignable, Category="Rope")
-FOnHookImpactSignature OnHookImpact;
+	/** Broadcast when the hook hits an obstacle. */
+	UPROPERTY(BlueprintAssignable, Category="Rope")
+	FOnHookImpactSignature OnHookImpact;
+
+	/** 
+	 * Updates the hook mesh orientation to follow velocity with a weighted feel. 
+	 * Call this during tick before impact.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Rope")
+	void UpdateHookOrientation(const FVector& Velocity, float DeltaTime);
 
 protected:
 virtual void BeginPlay() override;

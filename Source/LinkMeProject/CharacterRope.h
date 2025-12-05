@@ -6,7 +6,7 @@
 #include "GameFramework/Character.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
-#include "RopeRenderComponent.h"
+
 #include "RopeSystemComponent.h"
 
 #include "CharacterRope.generated.h"
@@ -26,9 +26,7 @@ USpringArmComponent* SpringArm;
 UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Camera")
 UCameraComponent* Camera;
 
-	/** Cosmetic rope rendering (purely client-side). */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
-	URopeRenderComponent* RopeRenderComponent;
+
 		
 	/** Aiming Component for target detection and state */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Aiming")

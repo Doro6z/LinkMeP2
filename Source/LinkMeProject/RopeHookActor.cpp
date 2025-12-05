@@ -93,3 +93,12 @@ void ARopeHookActor::HandleHookImpact(UPrimitiveComponent* HitComp, AActor* Othe
 		UE_LOG(LogTemp, Error, TEXT("OnHookImpact has no listeners!"));
 	}
 }
+
+void ARopeHookActor::UpdateHookOrientation(const FVector& Velocity, float DeltaTime)
+{
+	if (bImpacted || Velocity.IsNearlyZero()) return;
+
+	FRotator TargetRot = Velocity.Rotation();
+	FRotator NewRot = FMath::RInterpTo(GetActorRotation(), TargetRot, DeltaTime, 15.0f);
+	SetActorRotation(NewRot);
+}

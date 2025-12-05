@@ -10,8 +10,7 @@ ACharacterRope::ACharacterRope()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Rope gameplay + cosmetic components (kept minimal).
-	RopeRenderComponent = CreateDefaultSubobject<URopeRenderComponent>(TEXT("RopeRenderComponent"));
+
 
 	
 	AimingComponent = CreateDefaultSubobject<UAimingComponent>(TEXT("AimingComponent"));

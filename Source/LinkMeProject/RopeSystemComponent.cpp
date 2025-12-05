@@ -514,7 +514,7 @@ void URopeSystemComponent::UpdateRopeVisual()
 
 	if (RenderComponent && BendPoints.Num() > 0)
 	{
-		RenderComponent->RefreshFromBendPoints(BendPoints);
-		RenderComponent->Simulate(GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f);
+		FVector EndPosition = GetOwner() ? GetOwner()->GetActorLocation() : BendPoints.Last();
+		RenderComponent->UpdateVisualSegments(BendPoints, EndPosition);
 	}
 }
