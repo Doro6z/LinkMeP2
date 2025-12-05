@@ -37,3 +37,6 @@ Docs/
 # Ignore temporary
 Thumbs.db
 .DS_Store
+
+# Personal Feed/Tracking
+Feed/

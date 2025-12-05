@@ -374,47 +374,122 @@ void URopeSystemComponent::OnHookImpact(const FHitResult& Hit)
 
 void URopeSystemComponent::TransitionToAttached(const FHitResult& Hit)
 {
-	AActor* Owner = GetOwner();
-	if (!Owner) return;
+    AActor* Owner = GetOwner();
+    if (!Owner) return;
 
-	BendPoints.Reset();
-	
-	// Compute initial anchor position from hit
-	FVector HookImpactPoint = Hit.ImpactPoint;
-	FVector PlayerPosition = Owner->GetActorLocation();
-	
-	// Apply FindLastClearPoint to ensure anchor is not inside geometry
-	// This prevents issues when player jumps off platforms
-	FVector CorrectedAnchor = FindLastClearPoint(
-		PlayerPosition,
-		HookImpactPoint,
-		5,    // Subdivisions
-		15.f  // SphereRadius
-	);
-	
-	// Apply normal offset (similar to ComputeBendPointFromHit)
-	if (Hit.bBlockingHit && !Hit.ImpactNormal.IsNearlyZero())
-	{
-		CorrectedAnchor = CorrectedAnchor + Hit.ImpactNormal * 15.f;
-	}
-	
-	BendPoints.Add(CorrectedAnchor); // Anchor (corrected)
-	BendPoints.Add(PlayerPosition);   // Player
+    BendPoints.Reset();
 
-	CurrentLength = FMath::Min(MaxLength, (PlayerPosition - BendPoints[0]).Size());
-	RopeState = ERopeState::Attached;
-	
-	if (bShowDebug)
-	{
-		UE_LOG(LogTemp, Log, TEXT("Hook Anchor Set: Original=%s, Corrected=%s"),
-			*HookImpactPoint.ToString(), *CorrectedAnchor.ToString());
-		
-		DrawDebugSphere(GetWorld(), HookImpactPoint, 8.f, 12, FColor::Red, false, 3.f);
-		DrawDebugSphere(GetWorld(), CorrectedAnchor, 12.f, 12, FColor::Green, false, 3.f);
-	}
+    FVector HookImpactPoint = Hit.ImpactPoint;
+    FVector PlayerPosition = Owner->GetActorLocation();
 
-	OnRopeAttached(Hit);
+    FVector OffsetDebugY = FVector(0, 0, 50); // Décalage visuel pour les traces debug
+
+    // ==========================================================
+    // DEBUG: Draw incoming impact line
+    // ==========================================================
+    if (bShowDebug)
+    {
+        DrawDebugSphere(GetWorld(), HookImpactPoint, 12.f, 12, FColor::Red, false, 5.f, 0, 1.5f);
+        DrawDebugLine(GetWorld(), PlayerPosition + OffsetDebugY, HookImpactPoint + OffsetDebugY,
+                      FColor::Red, false, 3.f, 0, 2.f);
+        DrawDebugPoint(GetWorld(), HookImpactPoint + OffsetDebugY, 12.f, FColor::Red, false, 4.f);
+
+        UE_LOG(LogTemp, Log, TEXT("[TransitionToAttached] HookImpact: %s"),
+            *HookImpactPoint.ToString());
+    }
+
+    // ==========================================================
+    // Correct Anchor using FindLastClearPoint (with debug)
+    // ==========================================================
+
+    TArray<FVector> SubstepDebugPoints; // <- Collecte des substeps
+
+    FVector CorrectedAnchor = FindLastClearPoint(
+        PlayerPosition,
+        HookImpactPoint,
+        25,       // Subdivisions
+        5.f      // Sphere radiu
+    );
+
+    // ==========================================================
+    // DEBUG: Draw Substep Points
+    // ==========================================================
+    if (bShowDebug)
+    {
+        for (int32 i = 0; i < SubstepDebugPoints.Num(); i++)
+        {
+            const FVector& P = SubstepDebugPoints[i];
+            DrawDebugSphere(GetWorld(), P + OffsetDebugY, 6.f, 8,
+                            FColor::Yellow, false, 3.f, 0, 1.f);
+
+            if (i > 0)
+            {
+                DrawDebugLine(GetWorld(),
+                    SubstepDebugPoints[i - 1] + OffsetDebugY,
+                    P + OffsetDebugY,
+                    FColor::Yellow,
+                    false, 3.f, 0, 0.5f
+                );
+            }
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("[TransitionToAttached] Substeps: %d points"), SubstepDebugPoints.Num());
+    }
+
+    // ==========================================================
+    // Offset from normal
+    // ==========================================================
+
+    if (Hit.bBlockingHit && !Hit.ImpactNormal.IsNearlyZero())
+    {
+        CorrectedAnchor += Hit.ImpactNormal * 15.f;
+
+        if (bShowDebug)
+        {
+            DrawDebugLine(GetWorld(),
+                CorrectedAnchor + OffsetDebugY,
+                CorrectedAnchor + OffsetDebugY + Hit.ImpactNormal * 50.f,
+                FColor::Cyan,
+                false, 3.f, 0, 0.5f
+            );
+        }
+    }
+
+    // ==========================================================
+    // Final BendPoint setup
+    // ==========================================================
+    BendPoints.Add(CorrectedAnchor);
+    BendPoints.Add(PlayerPosition);
+
+    CurrentLength = FMath::Min(
+        MaxLength,
+        (PlayerPosition - CorrectedAnchor).Size()
+    );
+
+    RopeState = ERopeState::Attached;
+
+    // ==========================================================
+    // Debug final anchor
+    // ==========================================================
+    if (bShowDebug)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[TransitionToAttached] CorrectedAnchor: %s"),
+            *CorrectedAnchor.ToString());
+
+        DrawDebugSphere(GetWorld(), CorrectedAnchor, 14.f, 16, FColor::Green, false, 5.f, 0, 2.f);
+
+        DrawDebugLine(GetWorld(),
+            HookImpactPoint + OffsetDebugY,
+            CorrectedAnchor + OffsetDebugY,
+            FColor::Blue,
+            false, 3.f, 0, 2.f
+        );
+    }
+
+    // Notify BP / Other systems
+    OnRopeAttached(Hit);
 }
+
 
 void URopeSystemComponent::UpdateRopeVisual()
 {
