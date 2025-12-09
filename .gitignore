@@ -45,6 +45,8 @@ debugimvgvid/
 *.jpeg
 *.gif
 *.bmp
+*.mov
+*.mp4
 
 # Personal Feed/Tracking
 Feed/
