@@ -7,10 +7,22 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Net/UnrealNetwork.h"
 
 URopeSystemComponent::URopeSystemComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	SetIsReplicatedByDefault(true);
+}
+
+void URopeSystemComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(URopeSystemComponent, CurrentLength);
+	DOREPLIFETIME(URopeSystemComponent, BendPoints);
+	DOREPLIFETIME(URopeSystemComponent, RopeState);
+	DOREPLIFETIME(URopeSystemComponent, CurrentHook);
 }
 
 void URopeSystemComponent::BeginPlay()
@@ -40,7 +52,8 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 
 	if (RopeState == ERopeState::Flying)
 	{
-		if (CurrentHook && CurrentHook->HasImpacted())
+		// Server Only Logic for Impact
+		if (GetOwner()->HasAuthority() && CurrentHook && CurrentHook->HasImpacted())
 		{
 			TransitionToAttached(CurrentHook->GetImpactResult());
 		}
@@ -48,14 +61,23 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 
 	if (RopeState == ERopeState::Attached)
 	{
-		// Always update player position
+		// Always update player position (Client + Server)
 		UpdatePlayerPosition();
 
-		// Apply physics forces
+		// Apply physics forces - Server Authoritative? Or Client Prediction?
+		// For now: Both apply forces, but Server position allows reconciliation.
+		// Better: Server applies forces to MoveComp, Client simulates.
+		// If using standard CharacterMovement, AddForce should be called on Server preferably, 
+		// but client-side AddForce helps prediction.
 		ApplyForcesToPlayer();
 
 		// CRITICAL: Call Blueprint event for wrap/unwrap logic
-		OnRopeTickAttached(DeltaTime);
+		// Only run logic on Server to modify BendPoints.
+		// Clients just visualize the Replicated BendPoints.
+		if (GetOwner()->HasAuthority())
+		{
+			OnRopeTickAttached(DeltaTime);
+		}
 
 		// Debug display
 		if (bShowDebug && GEngine)
@@ -70,11 +92,28 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 	UpdateRopeVisual();
 }
 
+void URopeSystemComponent::OnRep_BendPoints()
+{
+	// Force update the visual component when the server sends new topology
+	UpdateRopeVisual();
+}
+
 // ===================================================================
 // ACTIONS
 // ===================================================================
 
 void URopeSystemComponent::FireHook(const FVector& Direction)
+{
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerFireHook(Direction);
+		// Optional: Client prediction here (spawn fake hook)
+		return;
+	}
+	ServerFireHook(Direction);
+}
+
+void URopeSystemComponent::ServerFireHook_Implementation(const FVector& Direction)
 {
 	if (!HookClass || !GetWorld())
 	{
@@ -89,6 +128,20 @@ void URopeSystemComponent::FireHook(const FVector& Direction)
 		return;
 	}
 
+    // --- Reset Existing Rope Logic ---
+    if (CurrentHook)
+    {
+        CurrentHook->Destroy();
+        CurrentHook = nullptr;
+    }
+    if (RenderComponent)
+    {
+        RenderComponent->ResetRope();
+    }
+    BendPoints.Reset();
+    RopeState = ERopeState::Idle;
+    // ---------------------------------
+
 	const FVector SpawnLocation = Owner->GetActorLocation() + Direction * 50.f;
 	const FRotator SpawnRotation = Direction.Rotation();
 
@@ -102,18 +155,38 @@ void URopeSystemComponent::FireHook(const FVector& Direction)
 		CurrentHook->Fire(Direction);
 		CurrentHook->OnHookImpact.AddDynamic(this, &URopeSystemComponent::OnHookImpact);
 		RopeState = ERopeState::Flying;
-		BendPoints.Reset();
-		UE_LOG(LogTemp, Log, TEXT("Hook fired successfully"));
+		UE_LOG(LogTemp, Log, TEXT("Hook fired successfully (Server)"));
 	}
 }
 
 void URopeSystemComponent::Sever()
+{
+    // Client-side visual reset for instant feedback
+    if (RenderComponent)
+    {
+        RenderComponent->ResetRope();
+    }
+
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerSever();
+		return;
+	}
+	ServerSever();
+}
+
+void URopeSystemComponent::ServerSever_Implementation()
 {
 	if (CurrentHook)
 	{
 		CurrentHook->Destroy();
 		CurrentHook = nullptr;
 	}
+
+    if (RenderComponent)
+    {
+        RenderComponent->ResetRope();
+    }
 
 	BendPoints.Reset();
 	CurrentLength = 0.f;
@@ -128,15 +201,37 @@ void URopeSystemComponent::Sever()
 		}
 	}
 
+	// This event should probably be multicast if visual effects are needed
 	OnRopeSevered();
 }
 
+
 void URopeSystemComponent::ReelIn(float DeltaTime)
+{
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerReelIn(DeltaTime);
+		return;
+	}
+	ServerReelIn(DeltaTime);
+}
+
+void URopeSystemComponent::ServerReelIn_Implementation(float DeltaTime)
 {
 	CurrentLength = FMath::Max(0.f, CurrentLength - ReelSpeed * DeltaTime);
 }
 
 void URopeSystemComponent::ReelOut(float DeltaTime)
+{
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerReelOut(DeltaTime);
+		return;
+	}
+	ServerReelOut(DeltaTime);
+}
+
+void URopeSystemComponent::ServerReelOut_Implementation(float DeltaTime)
 {
 	CurrentLength = FMath::Min(MaxLength, CurrentLength + ReelSpeed * DeltaTime);
 }

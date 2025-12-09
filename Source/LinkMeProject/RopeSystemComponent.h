@@ -31,6 +31,7 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// ===================================================================
 	// ACTIONS - Called from Blueprint Input Handlers
@@ -40,17 +41,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")
 	void FireHook(const FVector& Direction);
 
+	/** Server RPC for FireHook */
+	UFUNCTION(Server, Reliable)
+	void ServerFireHook(const FVector& Direction);
+
 	/** Cut the rope and detach. */
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")
 	void Sever();
+
+	/** Server RPC for Sever */
+	UFUNCTION(Server, Reliable)
+	void ServerSever();
 
 	/** Retract the rope (shorten CurrentLength). Call in Tick if button held. */
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")
 	void ReelIn(float DeltaTime);
 
+	UFUNCTION(Server, Unreliable)
+	void ServerReelIn(float DeltaTime);
+
 	/** Extend the rope (increase CurrentLength). Call in Tick if button held. */
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")
 	void ReelOut(float DeltaTime);
+
+	UFUNCTION(Server, Unreliable)
+	void ServerReelOut(float DeltaTime);
 
 	// ===================================================================
 	// BENDPOINT MANAGEMENT - Blueprint API
@@ -196,16 +211,19 @@ protected:
 	void TransitionToAttached(const FHitResult& Hit);
 
 protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope|State")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category="Rope|State")
 	float CurrentLength = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope|State")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_BendPoints, Category="Rope|State")
 	TArray<FVector> BendPoints;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope|State")
+	UFUNCTION()
+	void OnRep_BendPoints();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category="Rope|State")
 	ERopeState RopeState = ERopeState::Idle;
 
-	UPROPERTY(Transient)
+	UPROPERTY(Transient, Replicated)
 	ARopeHookActor* CurrentHook = nullptr;
 
 	UPROPERTY(Transient)

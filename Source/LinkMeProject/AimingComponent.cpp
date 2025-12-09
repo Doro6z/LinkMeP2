@@ -4,6 +4,7 @@
 #include "Engine/World.h"
 #include "Camera/CameraComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "DrawDebugHelpers.h"
 
 UAimingComponent::UAimingComponent()
 {
@@ -23,7 +24,12 @@ void UAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 
 	if (!bIsAiming)
 	{
+		if (bHasValidTarget) // Was valid, now not aiming
+		{
+			OnTargetLost.Broadcast();
+		}
 		bHasValidTarget = false;
+		CurrentTargetActor = nullptr;
 		return;
 	}
 
@@ -42,15 +48,64 @@ void UAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(GetOwner());
 
-	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, AimingTraceChannel, Params))
+	bool bHit = false;
+
+	// Use SphereTrace if Radius is defined
+	if (AimingRadius > 0.0f)
 	{
-		bHasValidTarget = true;
-		CurrentTargetLocation = Hit.ImpactPoint;
+		FCollisionShape Sphere = FCollisionShape::MakeSphere(AimingRadius);
+		bHit = GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, AimingTraceChannel, Sphere, Params);
 	}
 	else
 	{
+		bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, AimingTraceChannel, Params);
+	}
+
+	// Debug Draw
+	if (bDrawDebug)
+	{
+		if (AimingRadius > 0.0f)
+		{
+			// Draw capsule representing the sweep
+			DrawDebugCapsule(GetWorld(), (Start + End) * 0.5f, MaxRange * 0.5f, AimingRadius, CamRot.Quaternion(), bHit ? FColor::Green : FColor::Red, false, -1.0f);
+		}
+		else
+		{
+			DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, -1.0f, 0, 1.0f);
+		}
+		
+		if (bHit)
+		{
+			DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.0f, 12, FColor::Yellow, false, -1.0f);
+		}
+	}
+
+	AActor* NewTargetActor = bHit ? Hit.GetActor() : nullptr;
+
+	if (bHit)
+	{
+		bHasValidTarget = true;
+		CurrentTargetLocation = Hit.ImpactPoint;
+
+		// Handle Target Change
+		if (NewTargetActor != CurrentTargetActor)
+		{
+			// Switched targets (or acquired new one)
+			CurrentTargetActor = NewTargetActor;
+			OnTargetAcquired.Broadcast(CurrentTargetLocation, CurrentTargetActor);
+		}
+	}
+	else
+	{
+		// Target Lost
+		if (bHasValidTarget)
+		{
+			OnTargetLost.Broadcast();
+		}
+
 		bHasValidTarget = false;
-		CurrentTargetLocation = End; // Or zero, depending on UI needs
+		CurrentTargetLocation = End; 
+		CurrentTargetActor = nullptr;
 	}
 }
 

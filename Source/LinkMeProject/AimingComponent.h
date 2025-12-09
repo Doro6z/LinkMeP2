@@ -38,6 +38,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
 	float MaxRange = 2000.0f;
 
+	/** Radius for the aiming trace (SphereTrace). Set > 0 to enable. Makes aiming easier. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
+	float AimingRadius = 0.0f;
+
+	/** If true, draws debug lines and spheres for the aiming trace */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
+	bool bDrawDebug = false;
+
+	/** Event broadcast when a valid target is acquired */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTargetAcquired, const FVector&, Location, AActor*, TargetActor);
+	UPROPERTY(BlueprintAssignable, Category = "Aiming")
+	FOnTargetAcquired OnTargetAcquired;
+
+	/** Event broadcast when the target is lost */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTargetLost);
+	UPROPERTY(BlueprintAssignable, Category = "Aiming")
+	FOnTargetLost OnTargetLost;
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Aiming")
 	bool bIsAiming;
@@ -51,4 +69,8 @@ protected:
 	/** Trace channel to use for aiming checks */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
 	TEnumAsByte<ECollisionChannel> AimingTraceChannel = ECC_Visibility;
+
+	// Internal tracker to prevent spamming delegates
+	UPROPERTY()
+	AActor* CurrentTargetActor;
 };

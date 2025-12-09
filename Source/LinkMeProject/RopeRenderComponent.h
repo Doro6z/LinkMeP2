@@ -8,17 +8,40 @@
 #include "Components/SplineComponent.h"
 #include "RopeRenderComponent.generated.h"
 
+// XPBD Particle
 struct FRopeParticle
 {
-	FVector Position;
-	FVector PreviousPosition;
-	bool bFree; // If false, this particle is hard-pinned (start/end)
+	FVector Position = FVector::ZeroVector;
+	FVector PredictedPosition = FVector::ZeroVector;
+	FVector PreviousPosition = FVector::ZeroVector;
+	FVector Velocity = FVector::ZeroVector;
+	float InverseMass = 1.0f; // 0.0f = Pinned/Infinite Mass
+    bool bIsActive = false;   // Pool Status
+};
+
+// Virtual Segment Constraint (Represents a BendPoint or Player attachment)
+struct FPinnedConstraint
+{
+	FVector WorldLocation;
+	int32 ParticleIndex; // The particle this pin constrains
+	bool bActive = true;
+};
+
+// Distance Constraint for loop solving
+struct FDistanceConstraint
+{
+	int32 IndexA;
+	int32 IndexB;
+	float RestLength;
+	float Compliance = 0.0f; // XPBD compliance (0 = rigid)
 };
 
 /**
- * Hybrid Verlet Rope Renderer.
- * Simulates a high-resolution visual rope using Verlet integration,
- * loosely bound to the low-resolution gameplay BendPoints.
+ * Rope Visual Manager V2 (XPBD + Virtual Segmentation)
+ * 
+ * Simulates a fixed number of particles (Visual Rope).
+ * Instead of adding/removing particles on partial wraps, we apply
+ * PIN Constraints to existing particles to match the Gameplay BendPoints.
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class LINKMEPROJECT_API URopeRenderComponent : public USceneComponent
@@ -29,57 +52,107 @@ public:
 	URopeRenderComponent();
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void BeginPlay() override;
 
-	/** 
-	 * Main update function called by RopeSystemComponent.
-	 * Updates the simulation targets (BendPoints).
-	 */
+	/** Called by RopeSystemComponent when BendPoints change (OnRep or Server) */
 	void UpdateVisualSegments(const TArray<FVector>& BendPoints, const FVector& EndPosition);
 
 protected:
-	virtual void BeginPlay() override;
-
-	/** Internal simulation steps */
-	void SimulateParticles(float DeltaTime);
-	void SolveDistanceConstraints();
-	void SolveSoftConstraints(); // Pulls particles towards gameplay bendpoints
+	// --- Simulation Core (XPBD) ---
+	void SimulateXPBD(float DeltaTime);
+	void SolveConstraints(float Dt);
 	
-	/** Recreates the rope particles if necessary (e.g. first frame or reset) */
-	void InitializeRope(const FVector& Start, const FVector& End);
+	// --- Initialization ---
+	void InitializeParticles(const FVector& Start, const FVector& End);
+	void RebuildConstraints(const TArray<FVector>& BendPoints, const FVector& EndPosition);
 
-	/** Updates the SplineComponent to match particle positions */
-	void UpdateSplineRepresentation();
+	// --- Rendering ---
+	void UpdateSplineInterpolation(); // Catmull-Rom Centripetal
+	void ApplyCornerRounding(); // Corner-Rounding algorithm for smooth corners
+	void UpdateMeshes();
+    // ResampleParticles REMOVED
 
-	/** Updates the visible SplineMeshes along the spline */
-	void UpdateSplineMeshes();
-
-	/** Component Pool Management */
+	// --- Util ---
 	USplineMeshComponent* GetPooledSegment(int32 Index);
 	void HideUnusedSegments(int32 ActiveCount);
 
 protected:
-	// -- Config --
 
-	/** Length of each visual segment in the simulation. Smaller = smoother/heavier. */
-	UPROPERTY(EditAnywhere, Category="Rope|Simulation")
-	float SegmentLength = 20.0f;
+    // Pool Configuration
+    UPROPERTY(EditAnywhere, Category="Rope|Sim")
+    int32 MaxParticles = 200; // Fixed Pool Size
 
-	/** How strongly the rope is pulled towards the fixed gameplay bendpoints (0-1). */
-	UPROPERTY(EditAnywhere, Category="Rope|Simulation")
-	float SoftConstraintStrength = 0.2f;
+    // Current number of active particles in the pool
+	UPROPERTY(VisibleAnywhere, Category="Rope|Sim")
+    int32 ActiveParticleCount = 0;
+	
+	// Read-only debug view of actual count
+	UPROPERTY(VisibleAnywhere, Category="Rope|Sim")
+	int32 ParticleCount = 0;
 
-	/** Number of relaxation iterations for constraints. */
-	UPROPERTY(EditAnywhere, Category="Rope|Simulation")
+	// Use dynamic resolution based on length?
+	UPROPERTY(EditAnywhere, Category="Rope|Sim")
+	bool bUseDynamicParticleCount = true;
+
+	// If dynamic resolution is disabled, this fixed count is used
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(EditCondition="!bUseDynamicParticleCount", ClampMin="5"))
+	int32 FixedParticleCount = 40;
+
+    // Elasticity of the rope (0 = Rigid, >0 = Stretchy)
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float StretchCompliance = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Sim")
 	int32 SolverIterations = 4;
 
-	UPROPERTY(EditAnywhere, Category="Rope|Simulation")
+	UPROPERTY(EditAnywhere, Category="Rope|Sim")
+	int32 SubSteps = 2; // Physics steps per frame
+
+	UPROPERTY(EditAnywhere, Category="Rope|Sim")
 	FVector Gravity = FVector(0, 0, -980.f);
 
-	UPROPERTY(EditAnywhere, Category="Rope|Simulation")
-	float Damping = 0.95f;
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float PinStrength = 0.2f; // Now used for Soft Constraint Stiffness?
+
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0001", ClampMax="1.0"))
+	float BendPointCompliance = 0.0f; // 0 = Hard Pin, >0 = Saggy (Soft Pin)
+
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float Damping = 0.98f;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	float MeshLengthBase = 10.0f; // User default 10.0
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="0.1", ClampMax="3.0"))
+	float MaxMeshStretch = 1.5f;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="0.1", ClampMax="1.0"))
+	float MinMeshStretch = 0.6f;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	float CornerRadius = 15.0f; // Radius for corner rounding (local smoothing)
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="2", ClampMax="10"))
+	int32 CornerSubdivisions = 4; // Number of points per corner arc
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	bool bEnableCornerRounding = true;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Physics")
+	bool bEnableCollision = true;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Physics")
+	TEnumAsByte<ECollisionChannel> RopeCollisionChannel = ECC_WorldStatic;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	UStaticMesh* RopeMesh = nullptr;
+
+public:
+    // Reset rendering state (clear particles)
+    void ResetRope();
+
+    // Debug Info
+    void DrawDebugInfo();
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	UMaterialInterface* RopeMaterial = nullptr;
@@ -88,22 +161,26 @@ protected:
 	float RopeThickness = 5.0f;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	float MeshRadius = 5.0f;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	TEnumAsByte<ESplineMeshAxis::Type> ForwardAxis = ESplineMeshAxis::Z;
 
-protected:
-	// -- State --
+	UPROPERTY(EditAnywhere, Category="Rope|Debug")
+	bool bShowDebugSpline = false;
 
-	/** High-res visual particles */
+private:
+	// State
 	TArray<FRopeParticle> Particles;
+	TArray<FPinnedConstraint> PinConstraints;
+	TArray<FDistanceConstraint> DistanceConstraints;
 
-	/** Copy of the latest gameplay bendpoints to target */
-	TArray<FVector> TargetBendPoints;
+	bool bInitialized = false;
 
-	/** Spline component used for smoothing the visual path */
+	// Components
 	UPROPERTY()
 	USplineComponent* RopeSpline;
 
-	/** Pool of meshes */
-	UPROPERTY(Transient)
-	TArray<USplineMeshComponent*> SegmentPool;
+	UPROPERTY()
+	TArray<USplineMeshComponent*> MeshPool;
 };

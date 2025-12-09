@@ -38,6 +38,14 @@ Docs/
 Thumbs.db
 .DS_Store
 
+# Debug videos and images
+debugimvgvid/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+
 # Personal Feed/Tracking
 Feed/
 !Feed/RopeSystemDocumentation.md
