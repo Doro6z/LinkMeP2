@@ -47,6 +47,20 @@ void UAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	FHitResult Hit;
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(GetOwner());
+	
+	// Also ignore all components attached to owner (mesh, capsule, etc.)
+	if (AActor* Owner = GetOwner())
+	{
+		TArray<UActorComponent*> Components;
+		Owner->GetComponents(Components);
+		for (UActorComponent* Comp : Components)
+		{
+			if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Comp))
+			{
+				Params.AddIgnoredComponent(PrimComp);
+			}
+		}
+	}
 
 	bool bHit = false;
 
@@ -61,9 +75,19 @@ void UAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 		bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, AimingTraceChannel, Params);
 	}
 
-	// Debug Draw
-	if (bDrawDebug)
+	// Debug Draw & Verbose Logs
+	if (bShowDebug)
 	{
+		// Log Trace Info
+		UE_LOG(LogTemp, Warning, TEXT("[Aiming] Trace Start: %s, End: %s, Hit: %s"), 
+			*Start.ToString(), *End.ToString(), bHit ? *Hit.ImpactPoint.ToString() : TEXT("None"));
+
+		if (bHit)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Aiming] Hit Actor: %s, Component: %s, Distance: %f"), 
+				*GetNameSafe(Hit.GetActor()), *GetNameSafe(Hit.GetComponent()), Hit.Distance);
+		}
+
 		if (AimingRadius > 0.0f)
 		{
 			// Draw capsule representing the sweep
@@ -124,4 +148,32 @@ bool UAimingComponent::GetCurrentTarget(FVector& OutTargetLocation) const
 {
 	OutTargetLocation = CurrentTargetLocation;
 	return bHasValidTarget;
+}
+
+FVector UAimingComponent::GetTargetLocation() const
+{
+	return CurrentTargetLocation;
+}
+
+FVector UAimingComponent::GetAimDirection() const
+{
+	APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+	if (!PC) 
+	{
+		return FVector::ForwardVector;
+	}
+
+	FVector CamLoc;
+	FRotator CamRot;
+	PC->GetPlayerViewPoint(CamLoc, CamRot);
+
+	// If we have a valid target, aim towards it
+	if (bHasValidTarget)
+	{
+		FVector Direction = (CurrentTargetLocation - CamLoc).GetSafeNormal();
+		return Direction;
+	}
+
+	// Otherwise return camera forward
+	return CamRot.Vector();
 }

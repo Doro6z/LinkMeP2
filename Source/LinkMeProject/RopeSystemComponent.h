@@ -37,13 +37,21 @@ public:
 	// ACTIONS - Called from Blueprint Input Handlers
 	// ===================================================================
 
-	/** Launch the hook in the specified direction. */
+	/** Launch the hook in the specified direction with default force. */
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")
 	void FireHook(const FVector& Direction);
+
+	/** Launch the hook with a specific velocity vector (for charged throws). */
+	UFUNCTION(BlueprintCallable, Category = "Rope|Actions")
+	void FireChargedHook(const FVector& Velocity);
 
 	/** Server RPC for FireHook */
 	UFUNCTION(Server, Reliable)
 	void ServerFireHook(const FVector& Direction);
+
+	/** Server RPC for FireChargedHook */
+	UFUNCTION(Server, Reliable)
+	void ServerFireChargedHook(const FVector& Velocity);
 
 	/** Cut the rope and detach. */
 	UFUNCTION(BlueprintCallable, Category="Rope|Actions")

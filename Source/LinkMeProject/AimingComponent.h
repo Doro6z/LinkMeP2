@@ -34,6 +34,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Aiming")
 	bool GetCurrentTarget(FVector& OutTargetLocation) const;
 
+	/** Returns the target location for aiming. Virtual to allow derived classes to apply magnetism, etc. */
+	UFUNCTION(BlueprintPure, Category = "Aiming")
+	virtual FVector GetTargetLocation() const;
+
+	/** Returns the direction to aim/fire. Virtual to allow derived classes to modify aiming behavior. */
+	UFUNCTION(BlueprintPure, Category = "Aiming")
+	virtual FVector GetAimDirection() const;
+
 	/** Max distance for the grapple hook */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
 	float MaxRange = 2000.0f;
@@ -42,9 +50,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
 	float AimingRadius = 0.0f;
 
-	/** If true, draws debug lines and spheres for the aiming trace */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Aiming")
-	bool bDrawDebug = false;
+	/** If true, enables Verbose Logs and Visual Debugging (Lines/Spheres) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bShowDebug = false;
 
 	/** Event broadcast when a valid target is acquired */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTargetAcquired, const FVector&, Location, AActor*, TargetActor);

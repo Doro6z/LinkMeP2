@@ -5,15 +5,18 @@
 #include "Components/CapsuleComponent.h"
 
 #include "AimingComponent.h"
+#include "TPSAimingComponent.h"
 
 ACharacterRope::ACharacterRope()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-
-
+	// Create TPS Aiming Component
+	AimingComponent = CreateDefaultSubobject<UTPSAimingComponent>(TEXT("AimingComponent"));
 	
-	AimingComponent = CreateDefaultSubobject<UAimingComponent>(TEXT("AimingComponent"));
+	// Create Hook Charge Component
+	HookChargeComponent = CreateDefaultSubobject<UHookChargeComponent>(TEXT("HookChargeComponent"));
+
 
 	// Orbit camera setup.
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
@@ -46,10 +49,22 @@ void ACharacterRope::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	// Initialize Default Offset
-	if (SpringArm)
+	// Configure TPS Aiming Component
+	if (AimingComponent)
 	{
-		DefaultCameraOffset = SpringArm->SocketOffset;
+		AimingComponent->SetOwningSpringArm(SpringArm);
+		AimingComponent->SetOwningCamera(Camera);
+		
+		// Transfer configuration from Character to Component
+		AimingComponent->InitialCameraOffset = InitialCameraOffset;
+		AimingComponent->AimingShoulderOffset = AimingShoulderOffset;
+		AimingComponent->AimingFOV = AimingFOV;
+		AimingComponent->FOVTransitionSpeed = FOVTransitionSpeed;
+		AimingComponent->CameraOffsetTransitionSpeed = CameraOffsetTransitionSpeed;
+		AimingComponent->bEnableMagnetism = bEnableMagnetism;
+		AimingComponent->MagnetismRange = MagnetismRange;
+		AimingComponent->MagnetismConeAngle = MagnetismConeAngle;
+		AimingComponent->MagnetismStrength = MagnetismStrength;
 	}
 }
 
@@ -59,33 +74,40 @@ void ACharacterRope::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Camera Transition Logic
-	if (AimingComponent && SpringArm)
+	// NOTE: Camera offset logic is now handled by TPSAimingComponent
+	// No need to manually interpolate SpringArm->SocketOffset here
+
+	// Hook Charge Visualization (Trajectory & Reticle)
+	// Only show when actively charging (State == Charging)
+	if (HookChargeComponent && HookChargeComponent->IsCharging())
 	{
-		FVector TargetOffset = AimingComponent->IsAiming() ? AimingCameraOffset : DefaultCameraOffset;
-		SpringArm->SocketOffset = FMath::VInterpTo(SpringArm->SocketOffset, TargetOffset, DeltaTime, CameraTransitionSpeed);
+		// Update Trajectory
+		if (bShowTrajectoryWhileCharging)
+		{
+			TimeSinceLastTrajectoryUpdate += DeltaTime;
+			if (TimeSinceLastTrajectoryUpdate >= TrajectoryUpdateFrequency)
+			{
+				UpdateTrajectoryVisualization(DeltaTime);
+				TimeSinceLastTrajectoryUpdate = 0.0f;
+			}
+		}
+
+		// Update Reticle
+		UpdateFocusReticle();
+	}
+	else if (HookChargeComponent && !HookChargeComponent->IsCharging())
+	{
+		// Ensure Reticle is hidden if not charging
+		if (FocusReticleInstance && !FocusReticleInstance->IsHidden())
+		{
+			FocusReticleInstance->SetActorHiddenInGame(true);
+		}
 	}
 
-	// Trajectory Visualization
-	if (bIsPreparingHook && AimingComponent)
-	{
-		FPredictProjectilePathParams PredictParams;
-		PredictParams.StartLocation = GetMesh()->GetSocketLocation(TEXT("hand_r")); // Approximate hand pos
-		if (PredictParams.StartLocation.IsZero()) PredictParams.StartLocation = GetActorLocation();
-		
-		PredictParams.LaunchVelocity = GetControlRotation().Vector() * 2000.f; // Arbitrary speed for vis
-		PredictParams.MaxSimTime = 2.0f;
-		PredictParams.ProjectileRadius = 5.0f;
-		PredictParams.bTraceWithCollision = true;
-		PredictParams.bTraceComplex = false;
-		PredictParams.DrawDebugType = EDrawDebugTrace::ForOneFrame;
-		PredictParams.DrawDebugTime = 0.0f;
-		PredictParams.SimFrequency = 15.0f;
-		PredictParams.ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_WorldStatic));
-
-		FPredictProjectilePathResult PredictResult;
-		UGameplayStatics::PredictProjectilePath(GetWorld(), PredictParams, PredictResult);
-	}
+	// Legacy Trajectory (Fallback if not charging but aiming? 
+	// Actually, we want trajectory primarily during CHARGE now as per request.
+	// "Lorsqu'il charge, on voit la trajectoire que suivra le lancé s'augmenter."
+	// So we disable the old aiming-only static trajectory.)
 }
 
 void ACharacterRope::StartAiming()
@@ -114,6 +136,33 @@ void ACharacterRope::StopAiming()
 	// Restore movement orientation
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
+}
+
+FVector ACharacterRope::GetFireDirection() const
+{
+	if (AimingComponent)
+	{
+		return AimingComponent->GetAimDirection();
+	}
+	
+	// Fallback: use controller rotation
+	return GetControlRotation().Vector();
+}
+
+void ACharacterRope::StartFocus()
+{
+	if (UTPSAimingComponent* TPSComp = Cast<UTPSAimingComponent>(AimingComponent))
+	{
+		TPSComp->StartFocus();
+	}
+}
+
+void ACharacterRope::StopFocus()
+{
+	if (UTPSAimingComponent* TPSComp = Cast<UTPSAimingComponent>(AimingComponent))
+	{
+		TPSComp->StopFocus();
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -155,11 +204,239 @@ void ACharacterRope::AddControllerPitchInput(float Value)
 	Controller->SetControlRotation(ControlRot);
 }
 
+// ===================================================================
+// HOOK CHARGE SYSTEM & VISUALIZATION
+// ===================================================================
+
+void ACharacterRope::StartChargingHook()
+{
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, TEXT("[INPUT] StartChargingHook Pressed"));
+	
+	if (!HookChargeComponent || !AimingComponent) return;
+
+	UTPSAimingComponent* TPSComp = Cast<UTPSAimingComponent>(AimingComponent);
+	bool bFocus = TPSComp ? TPSComp->IsFocusing() : false;
+	FVector StartLoc = GetProjectileStartLocation();
+	FVector TargetLoc = AimingComponent->GetTargetLocation();
+
+	HookChargeComponent->StartCharging(bFocus, TargetLoc, StartLoc);
+}
+
+void ACharacterRope::CancelHookCharge()
+{
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange, TEXT("[INPUT] CancelHookCharge Called"));
+
+	if (HookChargeComponent)
+	{
+		HookChargeComponent->CancelCharging();
+	}
+	
+	if (FocusReticleInstance)
+	{
+		FocusReticleInstance->SetActorHiddenInGame(true);
+	}
+}
+
+void ACharacterRope::FireChargedHook()
+{
+	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, TEXT("[INPUT] FireChargedHook Released"));
+	UE_LOG(LogTemp, Warning, TEXT("ACharacterRope::FireChargedHook called"));
+
+	if (!HookChargeComponent || !AimingComponent) 
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("ERROR: Missing Components!"));
+		UE_LOG(LogTemp, Error, TEXT("FireChargedHook: Missing Component"));
+		return;
+	}
+
+	// Initialize to Zero
+	FVector OutVelocity = FVector::ZeroVector;
+	bool bValid = HookChargeComponent->StopChargingAndGetVelocity(OutVelocity);
+	
+	UE_LOG(LogTemp, Warning, TEXT("FireChargedHook: StopCharging returned %s, Velocity: %s"), 
+		bValid ? TEXT("TRUE") : TEXT("FALSE"), *OutVelocity.ToString());
+
+	// Hide reticle
+	if (FocusReticleInstance) FocusReticleInstance->SetActorHiddenInGame(true);
+
+	if (bValid)
+	{
+		// Si le composant n'a pas pu calculer de vélocité (ex: Mode Manuel), on le fait ici.
+		// On utilise SizeSquared pour éviter les problèmes de précision (IsNearlyZero)
+		if (OutVelocity.SizeSquared() < 1000.0f) 
+		{
+			// Fallback manuel : Direction caméra * Vitesse de charge
+			float Speed = HookChargeComponent->GetCurrentLaunchSpeed();
+			FVector FireDir = GetFireDirection();
+			
+			UE_LOG(LogTemp, Warning, TEXT("FireChargedHook: Using Fallback Manual Fire. Dir: %s, Speed: %f"), *FireDir.ToString(), Speed);
+			
+			if (FireDir.IsZero())
+			{
+				// Emergency Fallback: Actor Forward
+				FireDir = GetActorForwardVector();
+				UE_LOG(LogTemp, Error, TEXT("FireChargedHook: FireDirection was ZERO! Using Actor Forward."));
+				if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("ERROR: FireDirection is ZERO!"));
+			}
+			
+			OutVelocity = FireDir * Speed;
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("FireChargedHook: Final Velocity to Fire: %s"), *OutVelocity.ToString());
+		
+		// Fire!
+		
+		// Fire!
+		if (URopeSystemComponent* RopeSys = FindComponentByClass<URopeSystemComponent>())
+		{
+			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("Calling RopeSys->FireChargedHook..."));
+			UE_LOG(LogTemp, Warning, TEXT("FireChargedHook: Calling RopeSystem->FireChargedHook"));
+			RopeSys->FireChargedHook(OutVelocity);
+		}
+		else
+		{
+			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("ERROR: RopeSystemComponent Not Found!"));
+			UE_LOG(LogTemp, Error, TEXT("FireChargedHook: RopeSystemComponent NOT FOUND on Character"));
+		}
+	}
+	else
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red, FString::Printf(TEXT("Charge Too Low: %f < %f"), HookChargeComponent->GetChargeRatio(), HookChargeComponent->MinChargeThreshold));
+		UE_LOG(LogTemp, Warning, TEXT("FireChargedHook: Charge was invalid/too low"));
+	}
+	
+	bIsPreparingHook = false; // Reset Anim state
+}
+
+FVector ACharacterRope::GetProjectileStartLocation() const
+{
+	if (GetMesh()->DoesSocketExist(TEXT("hand_r")))
+	{
+		return GetMesh()->GetSocketLocation(TEXT("hand_r"));
+	}
+	return GetActorLocation();
+}
+
+void ACharacterRope::UpdateTrajectoryVisualization(float DeltaTime)
+{
+	if (!HookChargeComponent || !AimingComponent) return;
+
+	// Determine Velocity to visualize
+	float CurrentSpeed = HookChargeComponent->GetCurrentLaunchSpeed();
+	FVector LaunchVelocity = GetFireDirection() * CurrentSpeed;
+	
+	// Si Focus mode et Reachable, on pourrait vouloir visualiser la trajectoire "idéale" calculée par l'algo
+	// Mais HookChargeComponent ne stocke pas le vecteur vélocité idéal publiquement pour l'instant..
+	// Pour l'instant, visualiser GetFireDirection() * CurrentSpeed est une bonne approximation
+	// car en Aim mode, la caméra regarde vers la cible.
+	
+	FVector StartLoc = GetProjectileStartLocation();
+
+	// Configurer prédiction
+	FPredictProjectilePathParams PredictParams;
+	PredictParams.StartLocation = StartLoc;
+	PredictParams.LaunchVelocity = LaunchVelocity;
+	PredictParams.bTraceWithCollision = true;
+	PredictParams.bTraceComplex = false;
+	PredictParams.ProjectileRadius = 5.0f;
+	PredictParams.MaxSimTime = 3.0f;
+	PredictParams.SimFrequency = 15.0f; 
+	PredictParams.TraceChannel = ECC_WorldStatic; // Should use HookChargeComponent->ProjectileTraceChannel
+	PredictParams.ActorsToIgnore.Add(this);
+
+	// Couleur selon état
+	FLinearColor TraceColor = TrajectoryColorNormal;
+
+	if (UTPSAimingComponent* TPSComp = Cast<UTPSAimingComponent>(AimingComponent))
+	{
+		if (TPSComp->IsFocusing())
+		{
+			if (HookChargeComponent->IsTargetReachable() == false)
+			{
+				TraceColor = TrajectoryColorUnreachable;
+			}
+			else if (HookChargeComponent->IsChargePerfect())
+			{
+				TraceColor = TrajectoryColorPerfect;
+			}
+		}
+	}
+
+	// Disable built-in debug drawing to handle color manually
+	PredictParams.DrawDebugType = EDrawDebugTrace::None;
+
+	FPredictProjectilePathResult PredictResult;
+	if (UGameplayStatics::PredictProjectilePath(GetWorld(), PredictParams, PredictResult))
+	{
+		// Draw trajectory manually
+		for (int32 i = 0; i < PredictResult.PathData.Num() - 1; ++i)
+		{
+			DrawDebugLine(
+				GetWorld(), 
+				PredictResult.PathData[i].Location, 
+				PredictResult.PathData[i+1].Location, 
+				TraceColor.ToFColor(true), 
+				false, 
+				TrajectoryUpdateFrequency + 0.02f, 
+				0, 
+				3.0f // Thickness
+			);
+		}
+		
+		// Draw Impact point if hit
+		if (PredictResult.HitResult.bBlockingHit)
+		{
+			DrawDebugSphere(
+				GetWorld(),
+				PredictResult.HitResult.ImpactPoint,
+				10.0f,
+				12,
+				TraceColor.ToFColor(true),
+				false,
+				TrajectoryUpdateFrequency + 0.02f
+			);
+		}
+	}
+}
+
+void ACharacterRope::UpdateFocusReticle()
+{
+	UTPSAimingComponent* TPSComp = Cast<UTPSAimingComponent>(AimingComponent);
+	if (!TPSComp || !TPSComp->IsFocusing())
+	{
+		if (FocusReticleInstance) FocusReticleInstance->SetActorHiddenInGame(true);
+		return;
+	}
+
+	// Obtenir position cible depuis l'aiming component
+	// (Note: C'est le point visé par le rayon, pas forcément le point d'impact du projectile)
+	FVector TargetLoc = TPSComp->GetTargetLocation();
+
+	// Spawn reticle if needed
+	if (!FocusReticleInstance && FocusReticleClass)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		FocusReticleInstance = GetWorld()->SpawnActor<AActor>(FocusReticleClass, TargetLoc, FRotator::ZeroRotator, SpawnParams);
+	}
+
+	if (FocusReticleInstance)
+	{
+		FocusReticleInstance->SetActorHiddenInGame(false);
+		FocusReticleInstance->SetActorLocation(TargetLoc);
+		
+		// Ici on pourrait ajouter une logique pour le scale/pulse si ChargePerfect
+		// ex: FocusReticleInstance->SetActorScale3D(...)
+	}
+}
+
 void ACharacterRope::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-Super::SetupPlayerInputComponent(PlayerInputComponent);
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-// Exemple d’inputs (à adapter si tu utilises Enhanced Input)
-// PlayerInputComponent->BindAxis("Turn", this, &APawn::AddControllerYawInput);
-// PlayerInputComponent->BindAxis("LookUp", this, &ACharacterRope::AddControllerPitchInput);
+	// Bindings - Assurez-vous d'avoir les Action mappings dans l'éditeur ou EnhancedInput !
+	// PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &ACharacterRope::StartChargingHook);
+	// PlayerInputComponent->BindAction("Fire", IE_Released, this, &ACharacterRope::FireChargedHook);
+	// PlayerInputComponent->BindAction("Focus", IE_Pressed, this, &ACharacterRope::StartFocus);
+	// PlayerInputComponent->BindAction("Focus", IE_Released, this, &ACharacterRope::StopFocus);
 }

@@ -18,8 +18,13 @@ ARopeHookActor();
 
 virtual void Tick(float DeltaTime) override;
 
-/** Fire hook forward with an impulse. */
-void Fire(const FVector& Direction);
+	/** Fire hook forward with an impulse. */
+	UFUNCTION(BlueprintCallable, Category = "Rope")
+	void Fire(const FVector& Direction);
+
+	/** Fire hook with a specific velocity vector. */
+	UFUNCTION(BlueprintCallable, Category = "Rope")
+	void FireVelocity(const FVector& Velocity);
 
 /** Has the hook impacted something? */
 bool HasImpacted() const { return bImpacted; }

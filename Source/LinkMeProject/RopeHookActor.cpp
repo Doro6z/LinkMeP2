@@ -3,8 +3,10 @@
 #include "RopeHookActor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/CapsuleComponent.h" // Added missing include
 #include "GameFramework/Actor.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "GameFramework/Character.h" // Added missing include
 
 ARopeHookActor::ARopeHookActor()
 {
@@ -26,7 +28,27 @@ ARopeHookActor::ARopeHookActor()
 
 void ARopeHookActor::BeginPlay()
 {
-Super::BeginPlay();
+	Super::BeginPlay();
+
+	// Ignore collision with owner to prevent immediate self-hit
+	if (GetOwner())
+	{
+		if (CollisionComponent)
+		{
+			// Correct method name: IgnoreActorWhenMoving
+			CollisionComponent->IgnoreActorWhenMoving(GetOwner(), true);
+			
+			// Si le Owner est un Character, ignorer aussi sa capsule spécifiquement si besoin
+			if (ACharacter* Char = Cast<ACharacter>(GetOwner()))
+			{
+				CollisionComponent->IgnoreComponentWhenMoving(Char->GetCapsuleComponent(), true);
+				if (Char->GetMesh())
+				{
+					CollisionComponent->IgnoreComponentWhenMoving(Char->GetMesh(), true);
+				}
+			}
+		}
+	}
 }
 
 void ARopeHookActor::Tick(float DeltaTime)
@@ -45,6 +67,16 @@ void ARopeHookActor::Fire(const FVector& Direction)
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("CollisionComponent is null in Fire!"));
+	}
+}
+
+void ARopeHookActor::FireVelocity(const FVector& Velocity)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Hook FireVelocity called: %s"), *Velocity.ToString());
+	if (CollisionComponent)
+	{
+		// SetVelocity directly for precise control
+		CollisionComponent->SetPhysicsLinearVelocity(Velocity);
 	}
 }
 

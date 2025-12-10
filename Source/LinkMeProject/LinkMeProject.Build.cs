@@ -9,16 +9,13 @@ public class LinkMeProject : ModuleRules
         {
                 PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-                PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore", "ProceduralMeshComponent" });
+                PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore", "ProceduralMeshComponent", "UMG" });
 
                 // Expose the module root so subfolders like Rdm can include headers without extra relative paths.
                 PublicIncludePaths.AddRange(new string[] { ModuleDirectory });
                 PrivateIncludePaths.AddRange(new string[] { Path.Combine(ModuleDirectory, "Rdm") });
 
-                PrivateDependencyModuleNames.AddRange(new string[] {  });
-
-                // Uncomment if you are using Slate UI
-                // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+                PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
                 // Uncomment if you are using online features
                 // PrivateDependencyModuleNames.Add("OnlineSubsystem");

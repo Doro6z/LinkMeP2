@@ -677,9 +677,13 @@ void URopeRenderComponent::UpdateMeshes()
 
 USplineMeshComponent* URopeRenderComponent::GetPooledSegment(int32 Index)
 {
+    // Expand pool if needed
     if (Index >= MeshPool.Num())
     {
+        // Add new item
         USplineMeshComponent* Comp = NewObject<USplineMeshComponent>(this);
+        if (!Comp) return nullptr;
+
         Comp->SetStaticMesh(RopeMesh);
         Comp->SetMaterial(0, RopeMaterial);
         Comp->SetMobility(EComponentMobility::Movable);
@@ -701,13 +705,26 @@ USplineMeshComponent* URopeRenderComponent::GetPooledSegment(int32 Index)
         Comp->AttachToComponent(this, FAttachmentTransformRules::KeepWorldTransform);
         MeshPool.Add(Comp);
     }
-    return MeshPool[Index];
+
+    // Return current item
+    if (MeshPool.IsValidIndex(Index))
+    {
+        return MeshPool[Index];
+    }
+    
+    return nullptr;
 }
 
 void URopeRenderComponent::HideUnusedSegments(int32 ActiveCount)
 {
+    // Safely hide unused segments
     for (int32 i = ActiveCount; i < MeshPool.Num(); i++)
     {
-        if (MeshPool[i]) MeshPool[i]->SetVisibility(false);
+        USplineMeshComponent* Mesh = MeshPool[i];
+        if (IsValid(Mesh))
+        {
+             Mesh->SetVisibility(false);
+             // Verify if we need to Unregister? Usually SetVisibility(false) is enough and cheaper.
+        }
     }
 }

@@ -159,6 +159,66 @@ void URopeSystemComponent::ServerFireHook_Implementation(const FVector& Directio
 	}
 }
 
+void URopeSystemComponent::FireChargedHook(const FVector& Velocity)
+{
+	if (!GetOwner()->HasAuthority())
+	{
+		ServerFireChargedHook(Velocity);
+		return;
+	}
+	ServerFireChargedHook(Velocity);
+}
+
+void URopeSystemComponent::ServerFireChargedHook_Implementation(const FVector& Velocity)
+{
+	UE_LOG(LogTemp, Warning, TEXT("URopeSystemComponent::ServerFireChargedHook called with Velocity: %s"), *Velocity.ToString());
+
+	if (!HookClass || !GetWorld()) 
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("[SERVER] ERROR: HookClass or World is null!"));
+		UE_LOG(LogTemp, Error, TEXT("ServerFireChargedHook: HookClass or World is null"));
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	// Reset Logic
+	if (CurrentHook)
+	{
+		CurrentHook->Destroy();
+		CurrentHook = nullptr;
+	}
+	if (RenderComponent) RenderComponent->ResetRope();
+	BendPoints.Reset();
+	RopeState = ERopeState::Idle;
+
+	// Spawn
+	// Use a safer offset to avoid initial overlap (Capsule Radius is usually ~34-40)
+	const FVector SpawnLocation = Owner->GetActorLocation() + Velocity.GetSafeNormal() * 100.f;
+	const FRotator SpawnRotation = Velocity.Rotation();
+
+	FActorSpawnParameters Params;
+	Params.Owner = Owner;
+	Params.Instigator = Cast<APawn>(Owner);
+
+	CurrentHook = GetWorld()->SpawnActor<ARopeHookActor>(HookClass, SpawnLocation, SpawnRotation, Params);
+	if (CurrentHook)
+	{
+		CurrentHook->FireVelocity(Velocity);
+		CurrentHook->OnHookImpact.AddDynamic(this, &URopeSystemComponent::OnHookImpact);
+		RopeState = ERopeState::Flying;
+		
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("[SERVER] Hook Spawned & Fired!"));
+		UE_LOG(LogTemp, Warning, TEXT("ServerFireChargedHook: Hook spawned and fired successfully"));
+	}
+	else
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("[SERVER] ERROR: Failed to Spawn Hook!"));
+		UE_LOG(LogTemp, Error, TEXT("ServerFireChargedHook: Failed to spawn Hook Actor"));
+	}
+}
+
 void URopeSystemComponent::Sever()
 {
     // Client-side visual reset for instant feedback
