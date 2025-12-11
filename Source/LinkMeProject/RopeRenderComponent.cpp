@@ -152,6 +152,18 @@ void URopeRenderComponent::ResetRope()
     HideUnusedSegments(0);
 }
 
+void URopeRenderComponent::SetRopeHidden(bool bHidden)
+{
+    bRopeHidden = bHidden;
+    SetVisibility(!bHidden, true); // Hide this component and children
+
+    // Force update meshes to respect the new flag
+    if (bHidden)
+    {
+        HideUnusedSegments(0);
+    }
+}
+
 void URopeRenderComponent::DrawDebugInfo()
 {
     if (!GEngine) return;
@@ -205,10 +217,17 @@ void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoint
     // Update Constraints (Virtual Segmentation)
     RebuildConstraints(BendPoints, EndPosition);
 
-    if (BendPoints.Num() > 0)
+    if (BendPoints.Num() > 0 && bShowDebugSpline)
     {
          UE_LOG(LogTemp, Log, TEXT("[RopeRender] Updated Segments: %d BendPoints. Start=%s, End=%s"), 
             BendPoints.Num(), *BendPoints[0].ToString(), *EndPosition.ToString());
+    }
+
+    // If hidden, force clear
+    if (bRopeHidden)
+    {
+        HideUnusedSegments(0);
+        return;
     }
 }
 

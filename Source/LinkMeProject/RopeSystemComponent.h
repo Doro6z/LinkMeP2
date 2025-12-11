@@ -206,17 +206,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Physics")
 	float AirControlForce = 20000.f;
 
+	// Performance: Physics update rate (Hz). Higher = more responsive, lower = better performance
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Performance", meta=(ClampMin="10", ClampMax="60"))
+	float PhysicsUpdateRate = 20.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Debug")
-	bool bShowDebug = true;
+	bool bShowDebug = false;
 
 protected:
 	void ApplyForcesToPlayer();
 	void UpdateRopeVisual();
 	
+	// Timer-based physics tick (called at PhysicsUpdateRate)
+	void PhysicsTick();
+	
 	UFUNCTION()
 	void OnHookImpact(const FHitResult& Hit);
 	
 	void TransitionToAttached(const FHitResult& Hit);
+
+	// Timer handle for physics updates
+	FTimerHandle PhysicsTimerHandle;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category="Rope|State")

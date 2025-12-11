@@ -90,3 +90,40 @@ void UDebugMenuWidget::ToggleGodMode(bool bEnable)
         PC->ConsoleCommand("God");
     }
 }
+
+void UDebugMenuWidget::ToggleScreenMessages(bool bEnable)
+{
+    if (APlayerController* PC = GetOwningPlayer())
+    {
+        // "DisableAllScreenMessages" disables them if executed. 
+        // To Enable: "EnableAllScreenMessages"
+        // Wait, "DisableAllScreenMessages" is a toggle? No, usually separate commands or boolean.
+        // Actually, "DISABLEALLSCREENMESSAGES" toggles it or disables it. 
+        // Better approach: "key -1" clears them, but blocking needs a specific command.
+        
+        // Command "DISABLEALLSCREENMESSAGES"
+        if (!bEnable)
+        {
+             PC->ConsoleCommand("DISABLEALLSCREENMESSAGES");
+        }
+        else
+        {
+             PC->ConsoleCommand("ENABLEALLSCREENMESSAGES");
+        }
+    }
+}
+
+void UDebugMenuWidget::ToggleRopeVisibility(bool bVisible)
+{
+    if (APlayerController* PC = GetOwningPlayer())
+    {
+        if (PC->GetPawn())
+        {
+            if (URopeRenderComponent* RenderComp = PC->GetPawn()->FindComponentByClass<URopeRenderComponent>())
+            {
+                // Invert visible to hidden
+                RenderComp->SetRopeHidden(!bVisible);
+            }
+        }
+    }
+}

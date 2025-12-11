@@ -38,21 +38,30 @@ void URopeSystemComponent::BeginPlay()
 			DefaultBrakingDeceleration = MoveComp->BrakingDecelerationFalling;
 		}
 	}
+
+	// Start Timer for physics updates (Server only for gameplay logic)
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		GetWorld()->GetTimerManager().SetTimer(
+			PhysicsTimerHandle,
+			this,
+			&URopeSystemComponent::PhysicsTick,
+			1.0f / PhysicsUpdateRate,
+			true // Loop
+		);
+	}
 }
 
 void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// State machine
-	if (RopeState == ERopeState::Idle)
-	{
-		return;
-	}
+	// Lightweight visual updates only
+	if (RopeState == ERopeState::Idle) return;
 
 	if (RopeState == ERopeState::Flying)
 	{
-		// Server Only Logic for Impact
+		// Server: Check for hook impact
 		if (GetOwner()->HasAuthority() && CurrentHook && CurrentHook->HasImpacted())
 		{
 			TransitionToAttached(CurrentHook->GetImpactResult());
@@ -61,25 +70,10 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 
 	if (RopeState == ERopeState::Attached)
 	{
-		// Always update player position (Client + Server)
+		// Always update player position for visual smoothness
 		UpdatePlayerPosition();
 
-		// Apply physics forces - Server Authoritative? Or Client Prediction?
-		// For now: Both apply forces, but Server position allows reconciliation.
-		// Better: Server applies forces to MoveComp, Client simulates.
-		// If using standard CharacterMovement, AddForce should be called on Server preferably, 
-		// but client-side AddForce helps prediction.
-		ApplyForcesToPlayer();
-
-		// CRITICAL: Call Blueprint event for wrap/unwrap logic
-		// Only run logic on Server to modify BendPoints.
-		// Clients just visualize the Replicated BendPoints.
-		if (GetOwner()->HasAuthority())
-		{
-			OnRopeTickAttached(DeltaTime);
-		}
-
-		// Debug display
+		// Debug HUD (non-spammy)
 		if (bShowDebug && GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(
@@ -89,7 +83,20 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 		}
 	}
 
+	// Visual update (client + server)
 	UpdateRopeVisual();
+}
+
+// Timer-based physics (Server only, called at PhysicsUpdateRate Hz)
+void URopeSystemComponent::PhysicsTick()
+{
+	if (RopeState != ERopeState::Attached) return;
+
+	// Heavy physics calculations
+	ApplyForcesToPlayer();
+
+	// Blueprint event for wrap/unwrap logic (Server authoritative)
+	OnRopeTickAttached(1.0f / PhysicsUpdateRate);
 }
 
 void URopeSystemComponent::OnRep_BendPoints()
@@ -155,7 +162,11 @@ void URopeSystemComponent::ServerFireHook_Implementation(const FVector& Directio
 		CurrentHook->Fire(Direction);
 		CurrentHook->OnHookImpact.AddDynamic(this, &URopeSystemComponent::OnHookImpact);
 		RopeState = ERopeState::Flying;
-		UE_LOG(LogTemp, Log, TEXT("Hook fired successfully (Server)"));
+		
+		if (bShowDebug)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Hook fired successfully (Server)"));
+		}
 	}
 }
 
@@ -209,10 +220,13 @@ void URopeSystemComponent::ServerFireChargedHook_Implementation(const FVector& V
 		CurrentHook->OnHookImpact.AddDynamic(this, &URopeSystemComponent::OnHookImpact);
 		RopeState = ERopeState::Flying;
 		
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("[SERVER] Hook Spawned & Fired!"));
-		UE_LOG(LogTemp, Warning, TEXT("ServerFireChargedHook: Hook spawned and fired successfully"));
+		if (bShowDebug)
+		{
+			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, TEXT("[SERVER] Hook Spawned & Fired!"));
+			UE_LOG(LogTemp, Warning, TEXT("ServerFireChargedHook: Hook spawned and fired successfully"));
+		}
 	}
-	else
+	else if (bShowDebug)
 	{
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("[SERVER] ERROR: Failed to Spawn Hook!"));
 		UE_LOG(LogTemp, Error, TEXT("ServerFireChargedHook: Failed to spawn Hook Actor"));

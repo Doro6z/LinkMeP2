@@ -35,6 +35,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "LinkMe|Debug")
     void ToggleGodMode(bool bEnable);
 
+    // Toggles GEngine->AddOnScreenDebugMessage visibility
+    UFUNCTION(BlueprintCallable, Category = "LinkMe|Debug")
+    void ToggleScreenMessages(bool bEnable);
+
+    UFUNCTION(BlueprintCallable, Category = "LinkMe|Debug")
+    void ToggleRopeVisibility(bool bVisible);
+
 private:
     bool bAllDebugActive = false;
 };

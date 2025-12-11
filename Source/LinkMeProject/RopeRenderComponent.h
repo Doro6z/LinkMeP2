@@ -150,6 +150,10 @@ protected:
 public:
     // Reset rendering state (clear particles)
     void ResetRope();
+    
+    // Toggle visibility of the simulated rope
+    UFUNCTION(BlueprintCallable, Category="Rope|Visuals")
+    void SetRopeHidden(bool bHidden);
 
     // Debug Info
     void DrawDebugInfo();
@@ -168,6 +172,10 @@ public:
 
 	UPROPERTY(EditAnywhere, Category="Rope|Debug")
 	bool bShowDebugSpline = false;
+
+    // Track internal visibility state
+    UPROPERTY(VisibleAnywhere, Category="Rope|Visuals")
+    bool bRopeHidden = false;
 
 private:
 	// State
