@@ -681,9 +681,9 @@ void URopeSystemComponent::UpdateRopeVisual()
 		RenderComponent = GetOwner() ? GetOwner()->FindComponentByClass<URopeRenderComponent>() : nullptr;
 	}
 
-	if (RenderComponent && BendPoints.Num() > 0)
+	if (RenderComponent)
 	{
-		FVector EndPosition = GetOwner() ? GetOwner()->GetActorLocation() : BendPoints.Last();
-		RenderComponent->UpdateVisualSegments(BendPoints, EndPosition);
+		FVector PlayerPos = GetOwner() ? GetOwner()->GetActorLocation() : BendPoints.Last();
+		RenderComponent->UpdateVisualSegments(BendPoints, PlayerPos, CurrentLength, MaxLength);
 	}
 }

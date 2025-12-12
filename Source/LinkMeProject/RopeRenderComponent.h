@@ -20,11 +20,26 @@ struct FRopeParticle
 };
 
 // Virtual Segment Constraint (Represents a BendPoint or Player attachment)
+USTRUCT(BlueprintType)
 struct FPinnedConstraint
 {
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector WorldLocation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 ParticleIndex; // The particle this pin constrains
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bActive = true;
+
+    // Soft Magnetic Pin Parameters
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float MagneticRadius = 50.0f; // Radius of influence (cm) where attraction begins
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float MagneticStrength = 1.0f; // Multiplier for attraction force at center
 };
 
 // Distance Constraint for loop solving
@@ -55,9 +70,16 @@ public:
 	virtual void BeginPlay() override;
 
 	/** Called by RopeSystemComponent when BendPoints change (OnRep or Server) */
-	void UpdateVisualSegments(const TArray<FVector>& BendPoints, const FVector& EndPosition);
+	void UpdateVisualSegments(const TArray<FVector>& BendPoints, const FVector& EndPosition, float InCurrentLength, float InMaxLength);
 
 protected:
+    // Nouvelle approche : Stocke la longueur au repos spécifique pour chaque lien
+    // ConstraintRestLengths[i] est la distance idéale entre Particle[i] et Particle[i+1]
+    TArray<float> ConstraintRestLengths; 
+
+    // Helper pour calculer combien de particules sont nécessaires pour une longueur donnée
+    int32 CalculateSegmentParticleCount(float SegmentLength) const;
+
 	// --- Simulation Core (XPBD) ---
 	void SimulateXPBD(float DeltaTime);
 	void SolveConstraints(float Dt);
@@ -78,6 +100,12 @@ protected:
 
 protected:
 
+
+	float TautThreshold = 0.95f;
+bool bRopeIsTaut = false;
+float CachedMaxRopeLength = 1000.0f;
+float CachedCurrentRopeLength = 0.0f;
+float CachedStiffnessAlpha = 0.0f; // Gradient tension [0.0 = slack, 1.0 = taut]
     // Pool Configuration
     UPROPERTY(EditAnywhere, Category="Rope|Sim")
     int32 MaxParticles = 200; // Fixed Pool Size
@@ -157,6 +185,47 @@ public:
 
     // Debug Info
     void DrawDebugInfo();
+
+    // --- BLUEPRINT API FOR MANUAL CONTROL ---
+    
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void SetRopeParticles(const TArray<FVector>& Positions);
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    TArray<FVector> GetRopeParticlePositions() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void SetPinConstraints(const TArray<FPinnedConstraint>& NewPins);
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void UpdatePinLocation(int32 PinIndex, FVector NewLocation);
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void SetRopeSimulationParams(int32 InSubSteps, int32 InIterations, float InDamping, float InGravityScale);
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void SetVisualTensionParams(bool bEnableStraightening, float InStraighteningStiffness);
+
+    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
+    void ForceRebuildConstraints(const TArray<FVector>& BendPoints, const FVector& EndPosition);
+
+	// --- Blueprint API: Rope State Queries ---
+	
+	/** Returns true if rope is currently at maximum tension (straight) */
+	UFUNCTION(BlueprintPure, Category="Rope|State")
+	bool IsRopeTaut() const { return bRopeIsTaut; }
+
+	/** Returns current visual length of rope (sum of particle distances) */
+	UFUNCTION(BlueprintPure, Category="Rope|State")
+	float GetVisualRopeLength() const;
+
+	/** Returns normalized tension (0 = slack, 1 = max tension) */
+	UFUNCTION(BlueprintPure, Category="Rope|State")
+	float GetRopeTension() const;
+
+	/** Force rope to specific visual state (for debugging/cutscenes) */
+	UFUNCTION(BlueprintCallable, Category="Rope|Control")
+	void SetRopeTautState(bool bTaut) { bRopeIsTaut = bTaut; }
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	UMaterialInterface* RopeMaterial = nullptr;

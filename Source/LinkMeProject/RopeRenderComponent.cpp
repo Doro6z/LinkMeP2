@@ -197,23 +197,95 @@ void URopeRenderComponent::DrawDebugInfo()
         FString::Printf(TEXT("  Mesh Length Base: %.1f | Stretch: %.2f"), MeshLengthBase, MaxMeshStretch));
 
     float CurrentLength = 0.0f;
-    for(int32 i=0; i<ActiveParticleCount - 1; i++) CurrentLength += FVector::Dist(Particles[i].Position, Particles[i+1].Position);
+    for(int32 i=0; i<ActiveParticleCount - 1; i++) 
+    {
+         if (Particles[i].bIsActive && Particles[i+1].bIsActive)
+             CurrentLength += FVector::Dist(Particles[i].Position, Particles[i+1].Position);
+    }
     
     GEngine->AddOnScreenDebugMessage(KeyBase + 4, 0.0f, FColor::White, 
         FString::Printf(TEXT("  Sim Length: %.2f m"), CurrentLength / 100.0f));
+
+    // New Debug Info
+    FColor TensionColor = bRopeIsTaut ? FColor::Red : FColor::Cyan;
+    GEngine->AddOnScreenDebugMessage((int32)GetUniqueID() + 500, 0.0f, TensionColor, 
+        FString::Printf(TEXT("  STATE: %s  (Tension: %.2f)"), bRopeIsTaut ? TEXT("TAUT") : TEXT("SLACK"), GetRopeTension()));
+    
+    GEngine->AddOnScreenDebugMessage((int32)GetUniqueID() + 600, 0.0f, FColor::Yellow, 
+        FString::Printf(TEXT("  CacheLen: %.2f / Max: %.2f"), CachedCurrentRopeLength, CachedMaxRopeLength));
 }
 
-void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoints, const FVector& EndPosition)
+void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoints, const FVector& EndPosition, float InCurrentLength, float InMaxLength)
 {
     if (BendPoints.Num() == 0) return;
 
+    CachedCurrentRopeLength = InCurrentLength;
+    CachedMaxRopeLength = InMaxLength;
+    
+    // Detect Tension State
+    // Tension is based on: Visual Length (Actual) vs Deployed Length (Constraint)
+    // But for now, user asked to use RopeSystem length. 
+    // If we assume "CurrentLength" from System IS the constraint, and the Rope IS satisfying it...
+    // Actually, we usually compare VisualLength to CurrentLength.
+    // User said: "Rope Length est celui du RopeSystem".
+    // So let's use that for our displayed stats and internal logic threshold.
+    
+    // We calculate Visual Length
+    float VisualLen = 0.0f;
+    for (int32 i = 0; i < BendPoints.Num() - 1; i++)
+         VisualLen += FVector::Dist(BendPoints[i], BendPoints[i+1]);
+    VisualLen += FVector::Dist(BendPoints.Last(), EndPosition);
+
+    // Tension: If Visual Length matches or exceeds Deployed Limit
+    float TensionRatio = VisualLen / FMath::Max(1.0f, CachedCurrentRopeLength);
+    
+    // FIXED STIFFNESS LOGIC:
+    // When slack (TensionRatio < 0.4): NO straightening, let gravity work naturally
+    // When taut (TensionRatio 0.4 to 1.0): Progressive straightening with cubic ease-in
+    const float SlackThreshold = 0.4f;  // Below this: pure sag
+    const float TautThresholdVal = 1.0f; // At this: full steel cable mode
+    
+    if (TensionRatio < SlackThreshold)
+    {
+        // Fully slack: NO straightening at all
+        CachedStiffnessAlpha = 0.0f;
+    }
+    else
+    {
+        // Map [0.4, 1.0] → [0.0, 1.0] for stiffness blend
+        float RawAlpha = FMath::GetMappedRangeValueClamped(
+            FVector2D(SlackThreshold, TautThresholdVal), 
+            FVector2D(0.0f, 1.0f), 
+            TensionRatio
+        );
+        
+        // Cubic ease-in: Slow start, then rapid tightening as we approach full tension
+        CachedStiffnessAlpha = FMath::Pow(RawAlpha, 3.0f);
+    }
+    
+    // Binary taut flag (for backwards compat / debug)
+    bRopeIsTaut = (TensionRatio >= 0.95f);
+
+    // Debug Info on Screen
+    if (GEngine)
+    {
+        int32 KeyBase = 77700;
+        FColor StateColor = FColor::MakeRedToGreenColorFromScalar(CachedStiffnessAlpha);
+        GEngine->AddOnScreenDebugMessage(KeyBase + 1, 0.0f, StateColor, 
+            FString::Printf(TEXT("[Rope] TENSION: %.2f | Stiffness: %.2f"), 
+            TensionRatio, CachedStiffnessAlpha));
+            
+        GEngine->AddOnScreenDebugMessage(KeyBase + 2, 0.0f, FColor::Yellow, 
+            FString::Printf(TEXT("[Rope] Limit: %.0f / Vis: %.0f"), 
+            CachedCurrentRopeLength, VisualLen));
+    }
     // If first time, initialize particles in a straight line
     if (!bInitialized)
     {
         InitializeParticles(BendPoints[0], EndPosition);
-        bInitialized = true;
+        bInitialized = true; // CRITICAL: Enable rendering pipeline
     }
-
+    
     // Update Constraints (Virtual Segmentation)
     RebuildConstraints(BendPoints, EndPosition);
 
@@ -234,157 +306,200 @@ void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoint
 // Duplicate InitializeParticles DELETED
 
 
+
+int32 URopeRenderComponent::CalculateSegmentParticleCount(float SegmentLength) const
+{
+    // On veut au moins 1 particule par segment
+    // On arrondit pour avoir un nombre stable d'entiers
+    int32 Count = FMath::Max(1, FMath::RoundToInt(SegmentLength / MeshLengthBase));
+    return Count;
+}
+
 void URopeRenderComponent::RebuildConstraints(const TArray<FVector>& BendPoints, const FVector& EndPosition)
 {
+    // Safety: Ensure Pool matches MaxParticles to prevent bounds errors
+    if (Particles.Num() != MaxParticles)
+    {
+        Particles.SetNum(MaxParticles);
+        // Ensure new particles are inactive
+        for (FRopeParticle& P : Particles) P.bIsActive = false;
+    }
+
+    // 1. Reset
     PinConstraints.Reset();
-
-    // --- 1. Calculate Total Visual Length ---
-    float TotalLen = 0.f;
-    TArray<float> SegmentLens;
-    for (int32 i = 0; i < BendPoints.Num() - 1; i++)
-    {
-        float D = FVector::Dist(BendPoints[i], BendPoints[i+1]);
-        SegmentLens.Add(D);
-        TotalLen += D;
-    }
-    float LastSeg = FVector::Dist(BendPoints.Last(), EndPosition);
-    SegmentLens.Add(LastSeg);
-    TotalLen += LastSeg;
-
-    // --- 2. Dynamic Particle Count (Pool Management) ---
-    int32 TargetCount = 0;
+    DistanceConstraints.Reset();
+    ConstraintRestLengths.Reset(); // Nouveau array
     
-    if (bUseDynamicParticleCount)
-    {
-        TargetCount = FMath::Max(5, FMath::CeilToInt(TotalLen / MeshLengthBase));
-    }
-    else
-    {
-        TargetCount = FMath::Max(3, FixedParticleCount);
-    }
-    TargetCount = FMath::Min(TargetCount, MaxParticles); // Hard cap
+    // On déverrouille toutes les masses par défaut
+    for (FRopeParticle& P : Particles) P.InverseMass = 1.0f;
 
-    // Handle Initialization
-    if (ActiveParticleCount == 0)
-    {
-        ActiveParticleCount = TargetCount;
-        InitializeParticles(BendPoints[0], EndPosition); 
-        return; 
-    }
+    int32 GlobalParticleIndex = 0;
     
-    // Handle Pool Resize (No Interpolation of existing particles!)
-    if (TargetCount > ActiveParticleCount)
-    {
-        // Grow: Activate new particles at the tail
-        // Initialize them at the position of the last active particle to prevent "flying in"
-        FVector SpawnPos = Particles[ActiveParticleCount-1].Position;
-        
-        for (int32 i = ActiveParticleCount; i < TargetCount; i++)
-        {
-            FRopeParticle& P = Particles[i];
-            P.bIsActive = true;
-            P.Position = SpawnPos;
-            P.PreviousPosition = SpawnPos;
-            P.PredictedPosition = SpawnPos;
-            P.Velocity = Particles[ActiveParticleCount-1].Velocity; // Inherit velocity for smoothness?
-            P.InverseMass = 1.0f;
-        }
-    }
-    else if (TargetCount < ActiveParticleCount)
-    {
-        // Shrink: Deactivate tail
-        for (int32 i = TargetCount; i < ActiveParticleCount; i++)
-        {
-            Particles[i].bIsActive = false;
-        }
-    }
+    // Ancre de départ (Toujours bloquée)
+    Particles[0].Position = BendPoints[0];
+    Particles[0].InverseMass = 0.0f;
+    Particles[0].bIsActive = true;
     
-    ActiveParticleCount = TargetCount;
-    ParticleCount = ActiveParticleCount; // Sync legacy prop
-
-    // --- 3. Recalculate RestLength for Distance Constraints ---
-    if (TotalLen > KINDA_SMALL_NUMBER && ActiveParticleCount > 1)
-    {
-        DistanceConstraints.Reset();
-        float NewRestLen = TotalLen / (float)(ActiveParticleCount - 1);
-        
-        for (int32 i = 0; i < ActiveParticleCount - 1; i++)
-        {
-            FDistanceConstraint C;
-            C.IndexA = i;
-            C.IndexB = i + 1;
-            C.RestLength = NewRestLen;
-            C.Compliance = StretchCompliance; 
-            DistanceConstraints.Add(C);
-        }
-    }
-
-    // --- 4. Reset all InverseMass to free (non-pinned) ---
-    for (FRopeParticle& P : Particles)
-    {
-        P.InverseMass = 1.0f;
-    }
-
-    // --- 5. Pin Start (Anchor) ---
-    Particles[0].InverseMass = 0.0f; // Infinite mass
     FPinnedConstraint StartPin;
     StartPin.ParticleIndex = 0;
     StartPin.WorldLocation = BendPoints[0];
     StartPin.bActive = true;
     PinConstraints.Add(StartPin);
 
-    // --- 6. Pin End (Player) ---
-    Particles.Last().InverseMass = 0.0f;
-    FPinnedConstraint EndPin;
-    EndPin.ParticleIndex = ParticleCount - 1;
-    EndPin.WorldLocation = EndPosition;
-    EndPin.bActive = true;
-    PinConstraints.Add(EndPin);
+    // 2. Boucle Topologique sur les Segments
+    // On itère de 0 à N (BendPoints + Position Joueur)
+    // Nombre de segments = BendPoints.Num() car le dernier segment va vers EndPosition
+    // ATTENTION : BendPoints contient déjà l'Ancre et les Coins.
+    
+    // Stratégie :
+    // Segment 0 : BendPoints[0] -> BendPoints[1]
+    // ...
+    // Segment Final : BendPoints.Last() -> EndPosition
+    
+    TArray<FVector> AllPoints = BendPoints;
+    AllPoints.Add(EndPosition); // On ajoute le joueur à la fin de la liste logique
 
-    // --- 7. Pin Corners (Virtual Segmentation) ---
-    if (BendPoints.Num() > 1)
+    for (int32 i = 0; i < AllPoints.Num() - 1; i++)
     {
-        float AccumDist = 0.f;
-        for (int32 i = 1; i < BendPoints.Num(); i++) // Skip 0 (already pinned)
+        FVector StartPos = AllPoints[i];
+        FVector EndPos = AllPoints[i+1];
+        bool bIsLastSegment = (i == AllPoints.Num() - 2); // Le segment connecté au joueur
+
+        float SegmentDist = FVector::Dist(StartPos, EndPos);
+        
+        // A. CALCUL DU BUDGET LOCAL
+        int32 SegmentCount;
+        
+        if (bIsLastSegment)
         {
-            AccumDist += SegmentLens[i - 1];
-            float Alpha = AccumDist / TotalLen;
-            int32 PinIdx = FMath::Clamp(FMath::RoundToInt(Alpha * (ParticleCount - 1)), 1, ParticleCount - 2);
+            // Segment Joueur : On prend tout ce qui reste
+            // Cela permet une élongation fluide sans "Snap" d'arrondi violent
+            int32 Remaining = MaxParticles - GlobalParticleIndex - 1;
             
-            // If Compliance is 0, we use infinite mass (Hard Pin).
-            // If Compliance > 0, we use dynamic mass (Soft Pin) to allow gravity to affect it.
-            if (BendPointCompliance > KINDA_SMALL_NUMBER)
+            if (Remaining < 1)
             {
-                Particles[PinIdx].InverseMass = 1.0f; // Soft Pin
+                // Plus de budget : on connecte directement à la particule existante
+                SegmentCount = 0;
             }
             else
             {
-                Particles[PinIdx].InverseMass = 0.0f; // Hard Pin
+                // On calcule l'idéal et on clampe
+                int32 Ideal = FMath::CeilToInt(SegmentDist / MeshLengthBase);
+                SegmentCount = FMath::Clamp(Ideal, 1, Remaining);
             }
+        }
+        else
+        {
+            // Segment Fixe : Arrondi Strict -> Nombre de particules CONSTANT -> Pas de jitter
+            SegmentCount = CalculateSegmentParticleCount(SegmentDist);
+            
+            // Safety check overflow
+            if (GlobalParticleIndex + SegmentCount >= MaxParticles)
+            {
+                SegmentCount = MaxParticles - GlobalParticleIndex - 1;
+                if(SegmentCount < 1) break; // Plus de budget
+            }
+        }
 
+        // B. COMPENSATION D'ÉLASTICITÉ (Le secret anti-pop)
+        // Si le segment fait 105cm et qu'on a 10 particules -> RestLength = 10.5cm
+        float CompensatedRestLength = SegmentDist / (float)SegmentCount;
+
+        // C. GÉNÉRATION DES PARTICULES ET CONTRAINTES
+        for (int32 k = 0; k < SegmentCount; k++)
+        {
+            int32 CurrentIdx = GlobalParticleIndex + k;
+            int32 NextIdx = CurrentIdx + 1;
+
+            // Activation
+            Particles[NextIdx].bIsActive = true;
+            
+            // Position initiale (Seulement si nouvelle activation pour éviter le teleport)
+            // Note: Pour une stabilité parfaite, sur les segments fixes, on peut forcer la position
+            // Mais laissons la physique faire le lerp.
+            
+            // Création de la contrainte de distance
+            FDistanceConstraint DistC;
+            DistC.IndexA = CurrentIdx;
+            DistC.IndexB = NextIdx;
+            DistC.RestLength = CompensatedRestLength; // Valeur compensée !
+            DistC.Compliance = StretchCompliance;
+            DistanceConstraints.Add(DistC);
+        }
+
+        // D. PINNING (Verrouillage des coins)
+        // Si ce n'est pas le segment du joueur, on CLOUE la dernière particule au BendPoint suivant.
+        if (!bIsLastSegment)
+        {
+            int32 EndSegmentIndex = GlobalParticleIndex + SegmentCount;
+            
+            // 1. Force la position exacte (Anti-Drift)
+            Particles[EndSegmentIndex].Position = EndPos;
+            Particles[EndSegmentIndex].PredictedPosition = EndPos;
+            
+            // 2. Masse Infinie (Le mur ne bouge pas)
+            Particles[EndSegmentIndex].InverseMass = 0.0f;
+            
+            // 3. Ajout Contrainte Pin (pour le solver)
             FPinnedConstraint Pin;
-            Pin.ParticleIndex = PinIdx;
-            Pin.WorldLocation = BendPoints[i];
+            Pin.ParticleIndex = EndSegmentIndex;
+            Pin.WorldLocation = EndPos;
             Pin.bActive = true;
             PinConstraints.Add(Pin);
         }
+
+        GlobalParticleIndex += SegmentCount;
     }
+    
+    // Update du count final
+    ActiveParticleCount = GlobalParticleIndex + 1;
+    
+    // Pin Final (Joueur)
+    // On le laisse généralement avec une masse 0 pour qu'il suive parfaitement le joueur/gun
+    Particles[ActiveParticleCount-1].InverseMass = 0.0f;
+    Particles[ActiveParticleCount-1].Position = EndPosition;
+    
+    FPinnedConstraint EndPin;
+    EndPin.ParticleIndex = ActiveParticleCount-1;
+    EndPin.WorldLocation = EndPosition;
+    EndPin.bActive = true;
+    PinConstraints.Add(EndPin);
 }
 
 
+// SimulateXPBD: Replaced with hardened version
 void URopeRenderComponent::SimulateXPBD(float DeltaTime)
 {
+    // ALT-TAB PROTECTION: Skip entire frame if DeltaTime is too large
+    // This prevents simulation explosions from accumulated time
+    if (DeltaTime > 0.1f)
+    {
+        return; // Skip this frame entirely - no simulation
+    }
+
     if (DeltaTime <= KINDA_SMALL_NUMBER) return;
 
     float SubStepDt = DeltaTime / (float)SubSteps;
+    const float MaxSpeed = 20000.0f; // 200m/s limit (increased from 50m/s to allow fast swings)
+    const float MaxSpeedSq = MaxSpeed * MaxSpeed;
 
     for (int32 Step = 0; Step < SubSteps; Step++)
     {
         // 1. Predict
         for (FRopeParticle& P : Particles)
         {
-            // Apply Gravity / External Forces
+            if (!P.bIsActive) continue;
+            
+            // Skip gravity for pinned particles
+            if (P.InverseMass == 0.0f)
+            {
+                P.PredictedPosition = P.Position;
+                continue;
+            }
+            
+            // Apply Gravity / External Forces (ALWAYS)
             P.Velocity += Gravity * SubStepDt;
+            
             P.PredictedPosition = P.Position + P.Velocity * SubStepDt;
         }
 
@@ -394,26 +509,41 @@ void URopeRenderComponent::SimulateXPBD(float DeltaTime)
         // 3. Update Integration
         for (FRopeParticle& P : Particles)
         {
+            if (!P.bIsActive) continue;
+            
             P.Velocity = (P.PredictedPosition - P.Position) / SubStepDt;
+            
+            // --- VELOCITY CLAMPING (Stability) ---
+            if (P.Velocity.SizeSquared() > MaxSpeedSq)
+            {
+                P.Velocity = P.Velocity.GetSafeNormal() * MaxSpeed;
+            }
+            if (P.Velocity.ContainsNaN())
+            {
+                P.Velocity = FVector::ZeroVector; 
+            }
+            // -------------------------------------
+
             P.Velocity *= Damping; // Apply damping to smooth motion
             P.PreviousPosition = P.Position;
             P.Position = P.PredictedPosition;
 
-            // 4. Ground Collision (Simple Raycast/SphereTrace Projection)
-            if (bEnableCollision)
+            // Correction if we clamped:
+            if (P.Velocity.SizeSquared() > MaxSpeedSq)
+            {
+                 P.Position = P.PreviousPosition + P.Velocity * SubStepDt;
+            }
+            
+            // 4. Ground Collision
+            if (bEnableCollision && P.InverseMass > 0.0f)
             {
                 FHitResult Hit;
                 FCollisionQueryParams Params;
-                Params.AddIgnoredActor(GetOwner()); // Ignore self
+                Params.AddIgnoredActor(GetOwner());
 
-                FVector Start = P.PreviousPosition; // Trace from previous to catch fast movement
+                FVector Start = P.PreviousPosition;
                 FVector End = P.Position;
                 
-                // If movement is very small, force a small downward trace to prevent sinking
-                if (FVector::DistSquared(Start, End) < 1.0f)
-                {
-                    End = Start + FVector(0, 0, -5.0f);
-                }
 
                 // Simple LineTrace or SphereTrace? SphereTrace is better for thickness.
                 // Using a small radius for robustness.
@@ -466,23 +596,39 @@ void URopeRenderComponent::SolveConstraints(float Dt)
                 
                 if (P.InverseMass == 0.0f)
                 {
-                    // Hard Constraint / Kinematic
-                    // Use PinStrength for smooth interpolation (Manual Smoothing)
-                    // If PinStrength = 1.0, it's instant. 0.2 is smooth.
-                    P.PredictedPosition = FMath::Lerp(P.PredictedPosition, TargetPos, PinStrength);
+                    // Hard Constraint with Magnetic Softness
+                    // Instead of a hard Lerp (snap), we use a magnetic force field
+                    FVector Delta = TargetPos - P.PredictedPosition;
+                    float Dist = Delta.Size();
+                    
+                    if (Dist > KINDA_SMALL_NUMBER)
+                    {
+                        // Calculate Magnetic Falloff
+                        // Strength = 1 / (1 + (Dist/Radius)^2)
+                        float Radius = FMath::Max(1.0f, Pin.MagneticRadius);
+                        float NormDist = Dist / Radius;
+                        float Falloff = 1.0f / (1.0f + NormDist * NormDist);
+                        
+                        // Apply attraction
+                        // Combine magnetic strength with global PinStrength
+                        float Attraction = Pin.MagneticStrength * Falloff * PinStrength;
+                        
+                        // Limit attraction to avoid overshooting in one step
+                        Attraction = FMath::Clamp(Attraction, 0.0f, 1.0f);
+                        
+                        P.PredictedPosition += Delta * Attraction;
+                    }
+                    else
+                    {
+                        P.PredictedPosition = TargetPos;
+                    }
                 }
                 else
                 {
-                    // Soft Constraint (XPBD)
-                    // Allows gravity to pull the particle down, creating a "sag".
-                    // Correction = w / (w + alpha/dt^2) * (Target - Current)
-                    
+                    // Soft Constraint (XPBD for dynamic mass)
                     float Alpha = BendPointCompliance / (Dt * Dt);
                     float W = P.InverseMass;
                     float Factor = W / (W + Alpha);
-                    
-                    // Apply correction towards Target
-                    // This pulls the particle towards the pin, but fights against Gravity (in Velocity/PredictedPos)
                     P.PredictedPosition += (TargetPos - P.PredictedPosition) * Factor;
                 }
             }
@@ -520,6 +666,49 @@ void URopeRenderComponent::SolveConstraints(float Dt)
             
             P1.PredictedPosition -= Dir * Correction * W1;
             P2.PredictedPosition += Dir * Correction * W2;
+        }
+    }
+
+    // --- VISUAL TENSION (Per-Segment Straightening) ---
+    // Applied with gradient stiffness to avoid abrupt transitions
+    // Straighten each segment between consecutive pins independently
+    if (CachedStiffnessAlpha > KINDA_SMALL_NUMBER && ActiveParticleCount > 2)
+    {
+        // Collect and sort pin indices
+        TArray<int32> PinIndices;
+        for (const FPinnedConstraint& Pin : PinConstraints)
+        {
+            if (Pin.bActive && Particles.IsValidIndex(Pin.ParticleIndex))
+            {
+                PinIndices.AddUnique(Pin.ParticleIndex);
+            }
+        }
+        PinIndices.Sort();
+        
+        // For each segment between consecutive pins
+        for (int32 s = 0; s < PinIndices.Num() - 1; s++)
+        {
+            int32 SegStart = PinIndices[s];
+            int32 SegEnd = PinIndices[s + 1];
+            
+            // Skip if segment is too short
+            if (SegEnd - SegStart <= 1) continue;
+            
+            FVector A = Particles[SegStart].PredictedPosition;
+            FVector B = Particles[SegEnd].PredictedPosition;
+            
+            // Straighten particles between these two pins
+            for (int32 i = SegStart + 1; i < SegEnd; i++)
+            {
+                if (Particles[i].InverseMass == 0.0f || !Particles[i].bIsActive) continue;
+                
+                float Alpha = (float)(i - SegStart) / (float)(SegEnd - SegStart);
+                FVector IdealPos = FMath::Lerp(A, B, Alpha);
+                
+                // Apply correction scaled by gradient stiffness
+                FVector Delta = IdealPos - Particles[i].PredictedPosition;
+                Particles[i].PredictedPosition += Delta * (0.15f * CachedStiffnessAlpha);
+            }
         }
     }
 }
@@ -747,3 +936,93 @@ void URopeRenderComponent::HideUnusedSegments(int32 ActiveCount)
         }
     }
 }
+
+// --- BLUEPRINT API IMPLEMENTATION ---
+
+void URopeRenderComponent::SetRopeParticles(const TArray<FVector>& Positions)
+{
+    if (Positions.Num() == 0) return;
+    
+    // Resize pool if needed (hard reset)
+    ActiveParticleCount = FMath::Min(Positions.Num(), MaxParticles);
+    
+    for (int32 i = 0; i < ActiveParticleCount; i++)
+    {
+        Particles[i].Position = Positions[i];
+        Particles[i].PreviousPosition = Positions[i];
+        Particles[i].PredictedPosition = Positions[i];
+        Particles[i].bIsActive = true;
+    }
+    
+    // Deactivate others
+    for (int32 i = ActiveParticleCount; i < MaxParticles; i++)
+    {
+        Particles[i].bIsActive = false;
+    }
+    
+    bInitialized = true;
+}
+
+TArray<FVector> URopeRenderComponent::GetRopeParticlePositions() const
+{
+    TArray<FVector> Positions;
+    Positions.Reserve(ActiveParticleCount);
+    for (int32 i = 0; i < ActiveParticleCount; i++)
+    {
+        Positions.Add(Particles[i].Position);
+    }
+    return Positions;
+}
+
+void URopeRenderComponent::SetPinConstraints(const TArray<FPinnedConstraint>& NewPins)
+{
+    PinConstraints = NewPins;
+}
+
+void URopeRenderComponent::UpdatePinLocation(int32 PinIndex, FVector NewLocation)
+{
+    if (PinConstraints.IsValidIndex(PinIndex))
+    {
+        PinConstraints[PinIndex].WorldLocation = NewLocation;
+    }
+}
+
+void URopeRenderComponent::SetRopeSimulationParams(int32 InSubSteps, int32 InIterations, float InDamping, float InGravityScale)
+{
+    SubSteps = FMath::Clamp(InSubSteps, 1, 10);
+    SolverIterations = FMath::Clamp(InIterations, 1, 20);
+    Damping = FMath::Clamp(InDamping, 0.0f, 1.0f);
+    Gravity = FVector(0, 0, -980.0f) * InGravityScale;
+}
+
+void URopeRenderComponent::SetVisualTensionParams(bool bEnableStraightening, float InStraighteningStiffness)
+{
+    // Note: bEnableStraightening maps to whether we apply the constraint
+    // We can use TautThreshold manipulation or add a specific flag if needed.
+    // For now, let's just expose the stiffness param if we store it.
+    // Currently hardcoded to 0.15f * StiffnessAlpha.
+    // TODO: Expose StraighteningStiffness as a member variable.
+}
+
+void URopeRenderComponent::ForceRebuildConstraints(const TArray<FVector>& BendPoints, const FVector& EndPosition)
+{
+    RebuildConstraints(BendPoints, EndPosition);
+}
+
+float URopeRenderComponent::GetVisualRopeLength() const
+{
+    float Len = 0.0f;
+    for (int32 i = 0; i < ActiveParticleCount - 1; i++)
+    {
+        Len += FVector::Dist(Particles[i].Position, Particles[i+1].Position);
+    }
+    return Len;
+}
+
+float URopeRenderComponent::GetRopeTension() const
+{
+    return CachedStiffnessAlpha; // Normalized tension
+}
+
+
+
