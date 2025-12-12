@@ -40,7 +40,8 @@ void URopeSystemComponent::BeginPlay()
 	}
 
 	// Start Timer for physics updates (Server only for gameplay logic)
-	if (GetOwner() && GetOwner()->HasAuthority())
+	// Only if bUseSubsteppedPhysics is TRUE
+	if (GetOwner() && GetOwner()->HasAuthority() && bUseSubsteppedPhysics)
 	{
 		GetWorld()->GetTimerManager().SetTimer(
 			PhysicsTimerHandle,
@@ -58,6 +59,12 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 
 	// Lightweight visual updates only
 	if (RopeState == ERopeState::Idle) return;
+
+	// If NOT using substepped physics (Timer), run physics on Tick
+	if (!bUseSubsteppedPhysics && GetOwner() && GetOwner()->HasAuthority() && RopeState == ERopeState::Attached)
+	{
+		PerformPhysics(DeltaTime);
+	}
 
 	if (RopeState == ERopeState::Flying)
 	{
@@ -88,7 +95,13 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 }
 
 // Timer-based physics (Server only, called at PhysicsUpdateRate Hz)
+// Timer-based physics tick (called at PhysicsUpdateRate Hz)
 void URopeSystemComponent::PhysicsTick()
+{
+	PerformPhysics(1.0f / PhysicsUpdateRate);
+}
+
+void URopeSystemComponent::PerformPhysics(float DeltaTime)
 {
 	if (RopeState != ERopeState::Attached) return;
 
@@ -96,7 +109,7 @@ void URopeSystemComponent::PhysicsTick()
 	ApplyForcesToPlayer();
 
 	// Blueprint event for wrap/unwrap logic (Server authoritative)
-	OnRopeTickAttached(1.0f / PhysicsUpdateRate);
+	OnRopeTickAttached(DeltaTime);
 }
 
 void URopeSystemComponent::OnRep_BendPoints()

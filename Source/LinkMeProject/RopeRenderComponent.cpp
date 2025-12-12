@@ -259,8 +259,16 @@ void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoint
             TensionRatio
         );
         
-        // Cubic ease-in: Slow start, then rapid tightening as we approach full tension
-        CachedStiffnessAlpha = FMath::Pow(RawAlpha, 3.0f);
+        // Multi-Step Ease Logic
+        if (TensionCurve)
+        {
+             CachedStiffnessAlpha = TensionCurve->GetFloatValue(TensionRatio);
+        }
+        else
+        {
+            // Fallback: Cubic ease-in
+            CachedStiffnessAlpha = FMath::Pow(RawAlpha, 3.0f);
+        }
     }
     
     // Binary taut flag (for backwards compat / debug)
@@ -309,9 +317,14 @@ void URopeRenderComponent::UpdateVisualSegments(const TArray<FVector>& BendPoint
 
 int32 URopeRenderComponent::CalculateSegmentParticleCount(float SegmentLength) const
 {
-    // On veut au moins 1 particule par segment
-    // On arrondit pour avoir un nombre stable d'entiers
-    int32 Count = FMath::Max(1, FMath::RoundToInt(SegmentLength / MeshLengthBase));
+    // Priority 1: Enforce Max Spacing (Physics/Collision reliability)
+    int32 DensityBelowLimit = FMath::CeilToInt(SegmentLength / MaxParticleSpacing);
+
+    // Priority 2: Visual Resolution (MeshLengthBase)
+    int32 VisualIdeal = FMath::RoundToInt(SegmentLength / MeshLengthBase);
+
+    // Use the higher count to satisfy both conditions
+    int32 Count = FMath::Max(1, FMath::Max(DensityBelowLimit, VisualIdeal));
     return Count;
 }
 
@@ -731,9 +744,18 @@ void URopeRenderComponent::UpdateSplineInterpolation()
     {
         RopeSpline->AddSplinePoint(Particles[i].Position, ESplineCoordinateSpace::World, false);
         
-        // Set point type to CurveCustomTangent or CurveClamped?
-        // CurveClamped is good for preventing overshoots.
-        RopeSpline->SetSplinePointType(i, ESplinePointType::CurveClamped, false);
+        // Ghost Influence Fix:
+        // Pinned particles (BendPoints) must break tangency to isolate segments.
+        // We look for InverseMass == 0.0f as a proxy for "Hard Pin".
+        // CornerRounding sub-routine will handle the visual smoothing later.
+        if (Particles[i].InverseMass < KINDA_SMALL_NUMBER)
+        {
+             RopeSpline->SetSplinePointType(i, ESplinePointType::Linear, false);
+        }
+        else
+        {
+             RopeSpline->SetSplinePointType(i, ESplinePointType::CurveClamped, false);
+        }
     }
 
     RopeSpline->UpdateSpline();

@@ -151,6 +151,14 @@ float CachedStiffnessAlpha = 0.0f; // Gradient tension [0.0 = slack, 1.0 = taut]
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	float MeshLengthBase = 10.0f; // User default 10.0
 
+	// Maximum spacing between particles. Logic will prioritize density over count limit.
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	float MaxParticleSpacing = 30.0f;
+
+	// Curve defining stiffness (Y) based on Tension Ratio (X: 0=slack, 1=taut)
+	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
+	UCurveFloat* TensionCurve;
+
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="0.1", ClampMax="3.0"))
 	float MaxMeshStretch = 1.5f;
 

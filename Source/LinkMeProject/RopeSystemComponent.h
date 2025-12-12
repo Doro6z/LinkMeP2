@@ -210,6 +210,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Performance", meta=(ClampMin="10", ClampMax="60"))
 	float PhysicsUpdateRate = 20.0f;
 
+	/** If true, uses a fixed timer for physics (stable but can stutter). If false, runs on Tick (smoother but fps dependent). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Performance")
+	bool bUseSubsteppedPhysics = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rope|Debug")
 	bool bShowDebug = false;
 
@@ -219,6 +223,9 @@ protected:
 	
 	// Timer-based physics tick (called at PhysicsUpdateRate)
 	void PhysicsTick();
+	
+	// Actual physics logic
+	void PerformPhysics(float DeltaTime);
 	
 	UFUNCTION()
 	void OnHookImpact(const FHitResult& Hit);
