@@ -41,16 +41,13 @@ void URopeSystemComponent::BeginPlay()
 
 	// Start Timer for physics updates (Server only for gameplay logic)
 	// Only if bUseSubsteppedPhysics is TRUE
+	// Timer removed for Tick-based physics (Fix Stutter)
+	/*
 	if (GetOwner() && GetOwner()->HasAuthority() && bUseSubsteppedPhysics)
 	{
-		GetWorld()->GetTimerManager().SetTimer(
-			PhysicsTimerHandle,
-			this,
-			&URopeSystemComponent::PhysicsTick,
-			1.0f / PhysicsUpdateRate,
-			true // Loop
-		);
+		GetWorld()->GetTimerManager().SetTimer(PhysicsTimerHandle, this, &URopeSystemComponent::PhysicsTick, 1.0f / PhysicsUpdateRate, true);
 	}
+	*/
 }
 
 void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -60,10 +57,14 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 	// Lightweight visual updates only
 	if (RopeState == ERopeState::Idle) return;
 
-	// If NOT using substepped physics (Timer), run physics on Tick
-	if (!bUseSubsteppedPhysics && GetOwner() && GetOwner()->HasAuthority() && RopeState == ERopeState::Attached)
+	// Standard Physics Tick (Fix Stutter)
+	if (GetOwner() && GetOwner()->HasAuthority() && RopeState == ERopeState::Attached)
 	{
-		PerformPhysics(DeltaTime);
+        // Guard against massive lag spikes
+        if (DeltaTime <= 0.1f)
+        {
+		    PerformPhysics(DeltaTime);
+        }
 	}
 
 	if (RopeState == ERopeState::Flying)
@@ -276,6 +277,7 @@ void URopeSystemComponent::ServerSever_Implementation()
     }
 
 	BendPoints.Reset();
+	BendPointNormals.Reset();  // Keep normals array in sync
 	CurrentLength = 0.f;
 	RopeState = ERopeState::Idle;
 
@@ -329,19 +331,38 @@ void URopeSystemComponent::ServerReelOut_Implementation(float DeltaTime)
 
 void URopeSystemComponent::AddBendPoint(const FVector& Location)
 {
+	// Delegate to the full version with a default normal
+	AddBendPointWithNormal(Location, FVector::UpVector);
+}
+
+void URopeSystemComponent::AddBendPointWithNormal(const FVector& Location, const FVector& SurfaceNormal)
+{
 	if (BendPoints.Num() < 2)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("AddBendPoint: Need at least 2 points (anchor + player)"));
 		return;
 	}
 
-	// Insert before the last element (player position)
-	BendPoints.Insert(Location, BendPoints.Num() - 1);
+	// CRITICAL: Ensure normals array is same size as positions array
+	// This handles the case where rope was initialized before this function was implemented
+	while (BendPointNormals.Num() < BendPoints.Num())
+	{
+		BendPointNormals.Add(FVector::UpVector); // Fill with default normals
+	}
+
+	// Insert position before the last element (player position)
+	const int32 InsertIndex = BendPoints.Num() - 1;
+	BendPoints.Insert(Location, InsertIndex);
+	
+	// Keep normals array in sync - now safe because we ensured same size
+	BendPointNormals.Insert(SurfaceNormal, InsertIndex);
 
 	if (bShowDebug)
 	{
 		DrawDebugSphere(GetWorld(), Location, 12, 12, FColor::Green, false, 2.f);
-		UE_LOG(LogTemp, Log, TEXT("WRAP: Added bendpoint at %s"), *Location.ToString());
+		DrawDebugLine(GetWorld(), Location, Location + SurfaceNormal * 30.f, FColor::Cyan, false, 2.f);
+		UE_LOG(LogTemp, Log, TEXT("WRAP: Added bendpoint at %s with normal %s"), 
+			*Location.ToString(), *SurfaceNormal.ToString());
 	}
 }
 
@@ -361,6 +382,12 @@ void URopeSystemComponent::RemoveBendPointAt(int32 Index)
 	}
 
 	BendPoints.RemoveAt(Index);
+	
+	// Keep normals array in sync
+	if (BendPointNormals.IsValidIndex(Index))
+	{
+		BendPointNormals.RemoveAt(Index);
+	}
 
 	if (bShowDebug)
 	{
@@ -672,31 +699,226 @@ void URopeSystemComponent::TransitionToAttached(const FHitResult& Hit)
     OnRopeAttached(Hit);
 }
 
+// ===================================================================
+// SURFACE NORMAL VALIDATION - Implementation
+// ===================================================================
+
+FVector URopeSystemComponent::CalculatePressureDirection(
+    const FVector& PointA,
+    const FVector& PointB,
+    const FVector& PointP)
+{
+    // Calculate unit vectors from B towards A and P
+    FVector DirToA = (PointA - PointB).GetSafeNormal();
+    FVector DirToP = (PointP - PointB).GetSafeNormal();
+
+    // The bisector (pressure direction) is the sum of these unit vectors
+    // If the rope is perfectly straight (180°), this will be ZeroVector
+    FVector Bisector = DirToA + DirToP;
+
+    // Normalize to get the direction of force
+    return Bisector.GetSafeNormal();
+}
+
+bool URopeSystemComponent::IsRopePullingAway(
+    const FVector& PressureDir,
+    const FVector& SurfaceNormal,
+    float Tolerance)
+{
+    // Edge Case: If rope is perfectly straight, pressure dir is zero
+    // In this case, geometry no longer constrains the rope -> Safe to unwrap
+    if (PressureDir.IsNearlyZero(0.01f))
+    {
+        return true;
+    }
+
+    // Dot Product:
+    // < 0 : Pressure and Normal are opposite (rope pushes INTO wall)
+    // > 0 : Pressure and Normal are same direction (rope pulls AWAY from wall)
+    float WallPressure = FVector::DotProduct(PressureDir, SurfaceNormal);
+
+    // If WallPressure < Tolerance (e.g., -0.05), rope is still pressed against wall
+    // We require WallPressure >= Tolerance to unwrap
+    return WallPressure >= Tolerance;
+}
+
+bool URopeSystemComponent::ShouldUnwrapPhysical(
+    const FVector& PrevFixed,
+    const FVector& CurrentBend,
+    const FVector& CurrentBendNormal,
+    const FVector& PlayerPos,
+    float AngleThreshold,
+    bool bCheckLineTrace)
+{
+    // ============================================================
+    // TIER 1: ANGLE CHECK (Hysteresis - Fast Rejection)
+    // ============================================================
+    FVector DirA = (PrevFixed - CurrentBend).GetSafeNormal();
+    FVector DirP = (PlayerPos - CurrentBend).GetSafeNormal();
+
+    float DotAlignment = FVector::DotProduct(DirA, DirP);
+
+    // If the angle is too sharp (e.g., > 2° or Dot > -0.999), reject immediately
+    // This prevents unwrapping when we're still wrapping around a corner
+    if (DotAlignment > AngleThreshold)
+    {
+        return false; // Angle too sharp, keep bend point
+    }
+
+    // ============================================================
+    // TIER 2: SURFACE NORMAL CHECK (Anti-Tunneling)
+    // ============================================================
+    FVector PressureDir = CalculatePressureDirection(PrevFixed, CurrentBend, PlayerPos);
+
+    if (!IsRopePullingAway(PressureDir, CurrentBendNormal, -0.05f))
+    {
+        // Rope is still pushing against the wall
+        // Even if angle looks flat, the physics says we're still constrained
+        #if WITH_EDITOR
+        if (bShowDebug && GetWorld())
+        {
+            // Debug: Show why we're blocked
+            DrawDebugLine(GetWorld(), CurrentBend, CurrentBend + PressureDir * 50.f, 
+                FColor::Red, false, 1.f, 0, 2.f);
+            DrawDebugLine(GetWorld(), CurrentBend, CurrentBend + CurrentBendNormal * 50.f, 
+                FColor::Blue, false, 1.f, 0, 2.f);
+            DrawDebugString(GetWorld(), CurrentBend + FVector(0, 0, 30), 
+                TEXT("BLOCKED: Rope Pushing"), nullptr, FColor::Red, 1.f);
+        }
+        #endif
+
+        return false; // Blocked by surface normal check
+    }
+
+    // ============================================================
+    // TIER 3: LINE TRACE (Final Safety - Detect Other Obstacles)
+    // ============================================================
+    if (bCheckLineTrace && GetWorld())
+    {
+        FHitResult Hit;
+        FCollisionQueryParams Params(SCENE_QUERY_STAT(RopeUnwrapTrace), false, GetOwner());
+
+        bool bBlocked = GetWorld()->LineTraceSingleByChannel(
+            Hit,
+            PrevFixed,
+            PlayerPos,
+            ECC_Visibility,
+            Params
+        );
+
+        if (bBlocked && Hit.bBlockingHit)
+        {
+            #if WITH_EDITOR
+            if (bShowDebug)
+            {
+                DrawDebugLine(GetWorld(), PrevFixed, PlayerPos, 
+                    FColor::Orange, false, 1.f, 0, 2.f);
+                DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.f, 8, 
+                    FColor::Orange, false, 1.f);
+                DrawDebugString(GetWorld(), Hit.ImpactPoint + FVector(0, 0, 30), 
+                    TEXT("BLOCKED: Other Obstacle"), nullptr, FColor::Orange, 1.f);
+            }
+            #endif
+
+            return false; // Path blocked by another obstacle
+        }
+    }
+
+    // ============================================================
+    // ALL CHECKS PASSED - SAFE TO UNWRAP
+    // ============================================================
+    #if WITH_EDITOR
+    if (bShowDebug && GetWorld())
+    {
+        DrawDebugLine(GetWorld(), PrevFixed, PlayerPos, 
+            FColor::Green, false, 1.f, 0, 3.f);
+        DrawDebugString(GetWorld(), CurrentBend + FVector(0, 0, 30), 
+            TEXT("UNWRAP OK"), nullptr, FColor::Green, 1.f);
+    }
+    #endif
+
+    return true;
+}
+
 
 void URopeSystemComponent::UpdateRopeVisual()
 {
-	// Debug rendering
-	if (bShowDebug && BendPoints.Num() > 0)
-	{
-		for (int32 i = 0; i < BendPoints.Num() - 1; ++i)
-		{
-			DrawDebugLine(GetWorld(), BendPoints[i], BendPoints[i + 1], FColor::Green, false, -1.f, 0, 3.f);
-			
-			FColor PointColor = (i == 0) ? FColor::Yellow : FColor::Red;
-			DrawDebugSphere(GetWorld(), BendPoints[i], 12.f, 12, PointColor, false, -1.f, 0, 2.f);
-		}
-		DrawDebugSphere(GetWorld(), BendPoints.Last(), 12.f, 12, FColor::Blue, false, -1.f, 0, 2.f);
-	}
-
-	// Update render component
 	if (!RenderComponent)
 	{
 		RenderComponent = GetOwner() ? GetOwner()->FindComponentByClass<URopeRenderComponent>() : nullptr;
+		if (!RenderComponent) return;
 	}
 
-	if (RenderComponent)
+    TArray<FVector> PointsToRender;
+    bool bShouldRender = false;
+    bool bIsDeploying = false;
+
+    // 1. Determine Points & Behavior based on State
+    if (RopeState == ERopeState::Flying)
+    {
+        if (CurrentHook && GetOwner())
+        {
+            // Consistent Ordering: [Anchor/Hook] -> [Player]
+            PointsToRender.Add(CurrentHook->GetActorLocation());
+            PointsToRender.Add(GetOwner()->GetActorLocation());
+            
+            bShouldRender = true;
+            bIsDeploying = true; // Enable Dynamic RestLength
+        }
+    }
+    else if (RopeState == ERopeState::Attached)
+    {
+         if (BendPoints.Num() >= 2)
+         {
+             // BendPoints already contains [Anchor, ... , Player]
+             PointsToRender = BendPoints;
+             bShouldRender = true;
+             bIsDeploying = false;
+         }
+    }
+    
+    // 2. Execute Update on Render Component
+    if (bShouldRender)
+    {
+        bool bStateChanged = (RopeState != LastRopeState);
+        bool bTopologyChanged = (PointsToRender.Num() != LastPointCount);
+        bool bFirstRender = !RenderComponent->IsRopeActive();
+        
+        // Condition for Full Rebuild:
+        // - First time rendering
+        // - State transition (Mode changed)
+        // - Topology changed (Point count changed)
+        if (bFirstRender || bStateChanged || bTopologyChanged)
+        {
+            RenderComponent->UpdateRope(PointsToRender, bIsDeploying);
+        }
+        else
+        {
+            // POSITION UPDATE ONLY (Optimized)
+            // Just update pins, keep physics state intact
+            RenderComponent->UpdatePinPositions(PointsToRender);
+        }
+        
+        LastPointCount = PointsToRender.Num();
+    }
+    else
+    {
+        // Go Idle
+        if (RenderComponent->IsRopeActive())
+        {
+            RenderComponent->HideRope();
+        }
+        LastPointCount = 0;
+    }
+    
+    LastRopeState = RopeState;
+
+	// Debug rendering
+	if (bShowDebug && PointsToRender.Num() > 0)
 	{
-		FVector PlayerPos = GetOwner() ? GetOwner()->GetActorLocation() : BendPoints.Last();
-		RenderComponent->UpdateVisualSegments(BendPoints, PlayerPos, CurrentLength, MaxLength);
+		for (int32 i = 0; i < PointsToRender.Num() - 1; ++i)
+		{
+			DrawDebugLine(GetWorld(), PointsToRender[i], PointsToRender[i + 1], FColor::Green, false, -1.f, 0, 3.f);
+		}
 	}
 }

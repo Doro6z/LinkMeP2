@@ -13,6 +13,14 @@ struct FRopeBendpoint
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     FVector Position = FVector::ZeroVector;
 
+    /** Surface normal at the wrap point - used for pressure direction validation */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    FVector SurfaceNormal = FVector::UpVector;
+
+    /** Whether this bend point has a valid surface normal */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    bool bHasValidNormal = false;
+
     // Infos de debug / pour retrouver l'edge
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     int32 TriangleIndex = INDEX_NONE;
@@ -26,6 +34,15 @@ struct FRopeBendpoint
     // Pour du multi-edges plus tard (graphe d'adjacence)
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<UPrimitiveComponent> HitComponent = nullptr;
+
+    // Constructors
+    FRopeBendpoint() = default;
+    
+    FRopeBendpoint(const FVector& InPosition, const FVector& InNormal = FVector::UpVector)
+        : Position(InPosition)
+        , SurfaceNormal(InNormal)
+        , bHasValidNormal(!InNormal.IsNearlyZero())
+    {}
 };
 
 /** Segment géométrique corde (pour debug / draw) */

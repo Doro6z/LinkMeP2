@@ -1,0 +1,161 @@
+# Surface Normal Validation - Implementation Summary
+
+## ✅ What's Completed
+
+### Architecture: Parallel Arrays (Network Optimized)
+```cpp
+// Replicated - 12 bytes per point
+TArray<FVector> BendPoints;
+
+// Local only (Server-side Surface Normal Validation)
+TArray<FVector> BendPointNormals;
+```
+
+**Why?** Replicating full `FRopeBendpoint` struct (61 bytes) would be 5x more bandwidth than needed.
+
+### Functions Implemented
+
+#### 1. `AddBendPointWithNormal(Location, Normal)` ✅
+```cpp
+// Use this in wrap detection:
+FHitResult Hit;
+if (CapsuleSweep(..., Hit))
+{
+    FVector BendLoc = ComputeBendPointFromHit(Hit);
+    AddBendPointWithNormal(BendLoc, Hit.ImpactNormal); // ✅ Captures normal
+}
+```
+
+#### 2. `CalculatePressureDirection(A, B, P)` ✅
+Returns the bisector direction (where rope "pushes" on corner B).
+
+#### 3. `IsRopePullingAway(PressureDir, Normal)` ✅
+Returns `true` if rope is pulling away from surface (safe to unwrap).
+
+#### 4. `ShouldUnwrapPhysical(PrevFixed, CurrentBend, CurrentBendNormal, PlayerPos)` ✅
+Complete three-tier validation:
+- Tier 1: Angle > 178°?
+- Tier 2: Rope pulling away from surface?
+- Tier 3: Path A→P clear?
+
+### Updated Functions
+
+#### `RemoveBendPointAt(Index)` ✅
+Now removes from both `BendPoints` AND `BendPointNormals` to keep arrays synced.
+
+---
+
+## 🔧 What Needs To Be Done
+
+### 1. Update Wrap Detection Code
+Find where wrap detection calls `AddBendPoint` and change to `AddBendPointWithNormal`:
+
+```cpp
+// OLD
+if (WrapDetected)
+{
+    AddBendPoint(NewLocation);
+}
+
+// NEW
+if (CapsuleSweep(..., Hit))
+{
+    FVector BendLoc = ComputeBendPointFromHit(Hit);
+    AddBendPointWithNormal(BendLoc, Hit.ImpactNormal); ✅
+}
+```
+
+### 2. Initialize Both Arrays on Rope Attach
+When rope attaches to a surface, both arrays must be initialized:
+
+```cpp
+// Find where rope attaches (likely in OnHookImpact or similar)
+BendPoints.Reset();
+BendPointNormals.Reset();
+
+BendPoints.Add(AnchorPosition);
+BendPointNormals.Add(Hit.ImpactNormal); // ✅ Add this
+
+BendPoints.Add(PlayerPosition);
+BendPointNormals.Add(FVector::UpVector); // Player has no "surface"
+```
+
+### 3. Clear Both Arrays on Sever
+```cpp
+void Sever()
+{
+    BendPoints.Reset();
+    BendPointNormals.Reset(); // ✅ Add this
+    // ... rest of sever logic
+}
+```
+
+---
+
+## 📊 Network Performance Comparison
+
+| Architecture | Bytes/Point | 5 Bend Points | 10 Bend Points |
+|--------------|-------------|---------------|----------------|
+| `TArray<FRopeBendpoint>` | 61 | 305 bytes | 610 bytes |
+| Parallel Arrays (Replicated) | 12 | 60 bytes | 120 bytes |
+| Parallel Arrays (Total Local) | 24 | 120 bytes | 240 bytes |
+
+**Bandwidth Savings**: ~80% reduction in replicated data! 🎉
+
+---
+
+## 🎮 Blueprint Usage
+
+### Simple Unwrap (Client-Side, No Surface Normal)
+```
+CheckForUnwrap:
+1. Angle Check (works with positions only)
+2. LineTrace A→P
+3. If clear → Unwrap
+```
+
+### Advanced Unwrap (Server-Side, Surface Normal Validation)
+```
+CheckForUnwrap:
+1. Get BendPointNormals[Index]
+2. Call ShouldUnwrapPhysical(A, B, B_Normal, P)
+3. If returns True → Unwrap
+```
+
+---
+
+## 🧪 Testing Checklist
+
+### Network Performance
+- [ ] Profile bandwidth with 10 bend points active
+- [ ] Verify `BendPointNormals` is NOT replicated
+- [ ] Confirm clients can unwrap with position-only logic
+
+### Surface Normal Validation
+- [ ] Wrap around thin pole (2cm diameter)
+- [ ] Validate no premature unwrap (tunneling prevention)
+- [ ] Verify debug visualization shows normals correctly
+
+### Array Synchronization
+- [ ] Add 5 bend points → both arrays have 7 elements (anchor + 5 + player)
+- [ ] Remove bend point → both arrays reduce by 1
+- [ ] Sever rope → both arrays empty
+
+---
+
+## 📝 Key Files Modified
+
+1. **RopeTypes.h** - Enhanced `FRopeBendpoint` struct (for future use)
+2. **RopeSystemComponent.h** - Added parallel arrays + helper functions
+3. **RopeSystemComponent.cpp** - Implemented all validation logic
+4. **BP_CheckForUnwrap_Advanced.txt** - Blueprint documentation
+
+---
+
+## Next Steps
+
+1. Find and update wrap detection calls
+2. Initialize/clear both arrays in attach/sever
+3. Test with thin geometry
+4. Profile network bandwidth
+5. Blueprint integration testing

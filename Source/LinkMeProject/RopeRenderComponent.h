@@ -58,7 +58,7 @@ struct FDistanceConstraint
  * Instead of adding/removing particles on partial wraps, we apply
  * PIN Constraints to existing particles to match the Gameplay BendPoints.
  */
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(Blueprintable, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class LINKMEPROJECT_API URopeRenderComponent : public USceneComponent
 {
 	GENERATED_BODY()
@@ -101,7 +101,7 @@ protected:
 protected:
 
 
-	float TautThreshold = 0.95f;
+
 bool bRopeIsTaut = false;
 float CachedMaxRopeLength = 1000.0f;
 float CachedCurrentRopeLength = 0.0f;
@@ -134,19 +134,27 @@ float CachedStiffnessAlpha = 0.0f; // Gradient tension [0.0 = slack, 1.0 = taut]
 	int32 SolverIterations = 4;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Sim")
-	int32 SubSteps = 2; // Physics steps per frame
+	int32 SubSteps = 4; // Physics steps per frame
 
 	UPROPERTY(EditAnywhere, Category="Rope|Sim")
 	FVector Gravity = FVector(0, 0, -980.f);
 
 	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
-	float PinStrength = 0.2f; // Now used for Soft Constraint Stiffness?
+	float PinStrength = 0.5f; // Now used for Soft Constraint Stiffness?
 
 	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0001", ClampMax="1.0"))
 	float BendPointCompliance = 0.0f; // 0 = Hard Pin, >0 = Saggy (Soft Pin)
 
 	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
-	float Damping = 0.98f;
+	float Damping = 0.1f;
+	UPROPERTY(EditAnywhere, Category="Rope|Sim", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float StraighteningAlpha = 0.5f; // 0 = no straightening, 1 = fully straight under tension
+	
+	UPROPERTY(EditAnywhere, Category="Rope|Straightening")
+	bool bEnableStraightening = true;
+
+	UPROPERTY(EditAnywhere, Category="Rope|Straightening", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float GravityScaleWhenTight = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	float MeshLengthBase = 10.0f; // User default 10.0
@@ -155,21 +163,11 @@ float CachedStiffnessAlpha = 0.0f; // Gradient tension [0.0 = slack, 1.0 = taut]
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	float MaxParticleSpacing = 30.0f;
 
-	// Curve defining stiffness (Y) based on Tension Ratio (X: 0=slack, 1=taut)
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
-	UCurveFloat* TensionCurve;
-
-	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="0.1", ClampMax="3.0"))
-	float MaxMeshStretch = 1.5f;
-
-	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="0.1", ClampMax="1.0"))
-	float MinMeshStretch = 0.6f;
-
-	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
-	float CornerRadius = 15.0f; // Radius for corner rounding (local smoothing)
+	float CornerRadius = 15.0f;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals", meta=(ClampMin="2", ClampMax="10"))
-	int32 CornerSubdivisions = 4; // Number of points per corner arc
+	int32 CornerSubdivisions = 4;
 
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	bool bEnableCornerRounding = true;
@@ -184,48 +182,84 @@ float CachedStiffnessAlpha = 0.0f; // Gradient tension [0.0 = slack, 1.0 = taut]
 	UStaticMesh* RopeMesh = nullptr;
 
 public:
-    // Reset rendering state (clear particles)
-    void ResetRope();
+	// ============ API PRINCIPALE ============
     
-    // Toggle visibility of the simulated rope
-    UFUNCTION(BlueprintCallable, Category="Rope|Visuals")
+    /**
+     * REBUILD TOPOLOGIQUE : Reconstruit toute la structure.
+     * Appelé UNIQUEMENT quand le nombre de points change.
+     * @param Points - [Start, ...Middles, End]. Minimum 2 éléments.
+     * @param bDeployingMode - Si true (mode Flying), RestLength = Distance actuelle.
+     */
+    UFUNCTION(BlueprintCallable, Category="Rope")
+    void UpdateRope(const TArray<FVector>& Points, bool bDeployingMode = false);
+    
+    /**
+     * MISE À JOUR POSITIONS : Met à jour les Pins sans toucher à la structure.
+     * Appelé à chaque frame pour suivre le joueur/hook.
+     * @param Points - Mêmes points que UpdateRope, mais ne change PAS la topologie.
+     */
+    UFUNCTION(BlueprintCallable, Category="Rope")
+    void UpdatePinPositions(const TArray<FVector>& Points);
+    
+    /**
+     * MODE DÉPLOIEMENT (Flying) : Met à jour les RestLength dynamiquement.
+     * Appelé à chaque frame pendant que le hook vole.
+     * Fait que la corde "se déroule" au lieu de "claquer".
+     */
+    UFUNCTION(BlueprintCallable, Category="Rope")
+    void SetRopeDeploying(bool bDeploying);
+    
+    /**
+     * Cache la corde sans la détruire.
+     */
+    UFUNCTION(BlueprintCallable, Category="Rope")
+    void HideRope();
+    
+    UFUNCTION(BlueprintCallable, Category="Rope")
     void SetRopeHidden(bool bHidden);
 
-    // Debug Info
     void DrawDebugInfo();
-
-    // --- BLUEPRINT API FOR MANUAL CONTROL ---
     
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void SetRopeParticles(const TArray<FVector>& Positions);
+    /**
+     * Réinitialise complètement (clear + hide).
+     */
+    UFUNCTION(BlueprintCallable, Category="Rope")
+    void ResetRope();
+    
+    /**
+     * La corde est-elle actuellement visible et active?
+     */
+    UFUNCTION(BlueprintPure, Category="Rope")
+    bool IsRopeActive() const { return bInitialized && !bRopeHidden; }
+    
+protected:
+    // Apply straightening when rope is under tension
+    void ApplyStraightening();
+    
+    // Flag: La corde est en mode "déploiement" (RestLength suit la distance)
+    bool bIsDeploying = false;
+    
+    // Nombre de points de la dernière topologie (pour détecter les changements)
+    int32 LastPointCount = 0;
+    
+    /** Returns current visual length of rope (sum of particle distances) */
+    UFUNCTION(BlueprintPure, Category="Rope|State")
+    float GetVisualRopeLength() const;
 
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    TArray<FVector> GetRopeParticlePositions() const;
-
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void SetPinConstraints(const TArray<FPinnedConstraint>& NewPins);
-
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void UpdatePinLocation(int32 PinIndex, FVector NewLocation);
-
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void SetRopeSimulationParams(int32 InSubSteps, int32 InIterations, float InDamping, float InGravityScale);
-
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void SetVisualTensionParams(bool bEnableStraightening, float InStraighteningStiffness);
-
-    UFUNCTION(BlueprintCallable, Category = "Rope|Control")
-    void ForceRebuildConstraints(const TArray<FVector>& BendPoints, const FVector& EndPosition);
+    // Interne: reconstruit les particules depuis les points
+    void RebuildFromPoints(const TArray<FVector>& Points);
+    
+    // Interne: met à jour uniquement les positions des Pins (InverseMass = 0)
+    void RefreshPinPositions(const TArray<FVector>& Points);
+    
+    // Interne: en mode Deploying, ajuste les RestLength pour suivre la distance
+    void UpdateDeployingRestLengths();
 
 	// --- Blueprint API: Rope State Queries ---
 	
 	/** Returns true if rope is currently at maximum tension (straight) */
 	UFUNCTION(BlueprintPure, Category="Rope|State")
 	bool IsRopeTaut() const { return bRopeIsTaut; }
-
-	/** Returns current visual length of rope (sum of particle distances) */
-	UFUNCTION(BlueprintPure, Category="Rope|State")
-	float GetVisualRopeLength() const;
 
 	/** Returns normalized tension (0 = slack, 1 = max tension) */
 	UFUNCTION(BlueprintPure, Category="Rope|State")
@@ -235,6 +269,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Rope|Control")
 	void SetRopeTautState(bool bTaut) { bRopeIsTaut = bTaut; }
 
+public:
 	UPROPERTY(EditAnywhere, Category="Rope|Visuals")
 	UMaterialInterface* RopeMaterial = nullptr;
 
@@ -250,6 +285,7 @@ public:
 	UPROPERTY(EditAnywhere, Category="Rope|Debug")
 	bool bShowDebugSpline = false;
 
+protected:
     // Track internal visibility state
     UPROPERTY(VisibleAnywhere, Category="Rope|Visuals")
     bool bRopeHidden = false;
@@ -267,5 +303,5 @@ private:
 	USplineComponent* RopeSpline;
 
 	UPROPERTY()
-	TArray<USplineMeshComponent*> MeshPool;
+	TArray<USplineMeshComponent*> SplineMeshes;
 };

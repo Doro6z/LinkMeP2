@@ -6,7 +6,8 @@ ARdmRopeTestCharacter::ARdmRopeTestCharacter()
 {
     PrimaryActorTick.bCanEverTick = false;
 
-    RopeRenderComponent = CreateDefaultSubobject<URopeRenderComponent>(TEXT("RopeRender"));
+    // RopeRenderComponent = CreateDefaultSubobject<URopeRenderComponent>(TEXT("RopeRender"));
+    // Removed to allow Blueprint-based Render Component (BPC_RopeRender) implementation.
 
 
     RopeSystem = CreateDefaultSubobject<URopeSystemComponent>(TEXT("RopeSystem"));

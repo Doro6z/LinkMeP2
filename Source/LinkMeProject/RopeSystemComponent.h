@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "RopeTypes.h"
 #include "RopeSystemComponent.generated.h"
 
 class ARopeHookActor;
@@ -83,6 +84,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Rope|BendPoints")
 	void AddBendPoint(const FVector& Location);
 
+	/** 
+	 * Add a new bendpoint with surface normal capture (RECOMMENDED for Surface Normal Validation).
+	 * This overload should be used when adding bend points from wrap detection logic.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Rope|BendPoints")
+	void AddBendPointWithNormal(const FVector& Location, const FVector& SurfaceNormal);
+
 	/** Remove the bendpoint at the given index. */
 	UFUNCTION(BlueprintCallable, Category="Rope|BendPoints")
 	void RemoveBendPointAt(int32 Index);
@@ -138,6 +146,65 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category="Rope|Trace")
 	FVector ComputeBendPointFromHit(const FHitResult& Hit, float Offset = 15.0f) const;
+
+	// ===================================================================
+	// SURFACE NORMAL VALIDATION - For Robust Unwrap Logic
+	// ===================================================================
+
+	/**
+	 * Calculate the pressure direction (force bisector) at a bend point.
+	 * This is the direction the rope "pushes" against the corner.
+	 * 
+	 * @param PointA - Previous fixed point
+	 * @param PointB - Current bend point
+	 * @param PointP - Player position
+	 * @return Normalized pressure direction vector (or ZeroVector if rope is perfectly straight)
+	 */
+	UFUNCTION(BlueprintPure, Category="Rope|Physics")
+	static FVector CalculatePressureDirection(
+		const FVector& PointA,
+		const FVector& PointB,
+		const FVector& PointP
+	);
+
+	/**
+	 * Check if the rope is pulling away from the surface (safe to unwrap).
+	 * Compares pressure direction with surface normal.
+	 * 
+	 * @param PressureDir - Direction rope pushes (from CalculatePressureDirection)
+	 * @param SurfaceNormal - Normal of the surface at bend point
+	 * @param Tolerance - Dot product threshold (-0.05 recommended)
+	 * @return True if rope is pulling away from surface, False if still pushing against it
+	 */
+	UFUNCTION(BlueprintPure, Category="Rope|Physics")
+	static bool IsRopePullingAway(
+		const FVector& PressureDir,
+		const FVector& SurfaceNormal,
+		float Tolerance = -0.05f
+	);
+
+	/**
+	 * Complete three-tier unwrap validation: Angle + Surface Normal + LineTrace.
+	 * This is the recommended way to check if unwrapping is safe.
+	 * 
+	 * @param PrevFixed - Previous fixed bend point (A)
+	 * @param PrevFixedNormal - Surface normal at A
+	 * @param CurrentBend - Current bend point to potentially remove (B)
+	 * @param CurrentBendNormal - Surface normal at B
+	 * @param PlayerPos - Current player position (P)
+	 * @param AngleThreshold - Minimum angle for unwrap (default 178° = -0.999 dot)
+	 * @param bCheckLineTrace - Whether to perform final line trace validation
+	 * @return True if safe to unwrap, False otherwise
+	 */
+	UFUNCTION(BlueprintCallable, Category="Rope|Validation")
+	bool ShouldUnwrapPhysical(
+		const FVector& PrevFixed,
+		const FVector& CurrentBend,
+		const FVector& CurrentBendNormal,
+		const FVector& PlayerPos,
+		float AngleThreshold = -0.999f,
+		bool bCheckLineTrace = true
+	);
 
 	// ===================================================================
 	// STATE ACCESS - Read-Only
@@ -239,8 +306,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Replicated, Category="Rope|State")
 	float CurrentLength = 0.f;
 
+	/** Bend point positions - Replicated for network efficiency (12 bytes per point) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_BendPoints, Category="Rope|State")
 	TArray<FVector> BendPoints;
+
+	/** 
+	 * Surface normals for each bend point - NOT replicated for bandwidth optimization.
+	 * Only used server-side for Surface Normal Validation.
+	 * Clients can recalculate if needed or use simplified unwrap logic.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope|State")
+	TArray<FVector> BendPointNormals;
 
 	UFUNCTION()
 	void OnRep_BendPoints();
@@ -253,6 +329,13 @@ protected:
 
 	UPROPERTY(Transient)
 	URopeRenderComponent* RenderComponent = nullptr;
+
+    // Rendering State Tracking
+    UPROPERTY(Transient)
+    ERopeState LastRopeState = ERopeState::Idle;
+    
+    UPROPERTY(Transient)
+    int32 LastPointCount = 0;
 
 	float DefaultBrakingDeceleration = 0.f;
 };

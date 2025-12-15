@@ -50,6 +50,10 @@
 		{
 			"Name": "SlateScreenReader",
 			"Enabled": true
+		},
+		{
+			"Name": "ProceduralVegetationEditor",
+			"Enabled": true
 		}
 	]
 }
