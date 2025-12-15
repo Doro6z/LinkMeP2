@@ -894,9 +894,12 @@ void URopeSystemComponent::UpdateRopeVisual()
         }
         else
         {
-            // POSITION UPDATE ONLY (Optimized)
-            // Just update pins, keep physics state intact
-            RenderComponent->UpdatePinPositions(PointsToRender);
+            // POSITION UPDATE ONLY
+            // RenderComponent->UpdatePinPositions(PointsToRender); // Legacy opt
+            // But we want to ensure Linkage, so UpdatePinPositions is OK if we fixed it in Render.
+            // However, previous attempt used UpdateRope. 
+            // The signature is UpdateRope(Points, bDeploying).
+            RenderComponent->UpdateRope(PointsToRender, bIsDeploying);
         }
         
         LastPointCount = PointsToRender.Num();
