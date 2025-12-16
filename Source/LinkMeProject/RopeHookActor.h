@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/ProjectileMovementComponent.h"
 #include "RopeHookActor.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHookImpactSignature, const FHitResult&, ImpactResult);
@@ -43,6 +44,10 @@ const FHitResult& GetImpactResult() const { return ImpactResult; }
 	UFUNCTION(BlueprintCallable, Category="Rope")
 	void UpdateHookOrientation(const FVector& Velocity, float DeltaTime);
 
+	// Exposed Publicly for RopeSystemComponent
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Movement")
+	class UProjectileMovementComponent* ProjectileMovement;
+
 protected:
 virtual void BeginPlay() override;
 
@@ -55,6 +60,8 @@ UStaticMeshComponent* HookMesh;
 
 UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Rope")
 UPrimitiveComponent* CollisionComponent;
+
+
 
 UPROPERTY(EditAnywhere, Category="Rope")
 float LaunchImpulse = 3500.f;

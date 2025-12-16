@@ -12,18 +12,30 @@ ARopeHookActor::ARopeHookActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	// Collision
 	USphereComponent* Sphere = CreateDefaultSubobject<USphereComponent>(TEXT("HookCollision"));
 	Sphere->InitSphereRadius(12.f);
-	Sphere->SetSimulatePhysics(true);
-	Sphere->SetNotifyRigidBodyCollision(true);
-	Sphere->SetCollisionProfileName(TEXT("PhysicsActor"));
+	// REMOVED: Sphere->SetSimulatePhysics(true);
+	// REMOVED: Sphere->SetNotifyRigidBodyCollision(true); // Handled by Projectile
+	Sphere->SetCollisionProfileName(TEXT("BlockAllDynamic")); // Changed from PhysicsActor
 	Sphere->OnComponentHit.AddDynamic(this, &ARopeHookActor::HandleHookImpact);
 	CollisionComponent = Sphere;
-	RootComponent = Sphere; // IMPORTANT: Set as root for physics to work
+	RootComponent = Sphere;
 
+	// Mesh
 	HookMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HookMesh"));
 	HookMesh->SetupAttachment(CollisionComponent);
 	HookMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Movement (PROJECTILE SYSTEM)
+	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
+	ProjectileMovement->UpdatedComponent = CollisionComponent;
+	ProjectileMovement->InitialSpeed = LaunchImpulse; // 3500.f
+	ProjectileMovement->MaxSpeed = LaunchImpulse;
+	ProjectileMovement->bRotationFollowsVelocity = true;
+	ProjectileMovement->bSweepCollision = true; // ANTI-TUNNELING FIX
+	ProjectileMovement->ProjectileGravityScale = 1.0f;
+	ProjectileMovement->bShouldBounce = false;
 }
 
 void ARopeHookActor::BeginPlay()
@@ -59,24 +71,21 @@ Super::Tick(DeltaTime);
 void ARopeHookActor::Fire(const FVector& Direction)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Hook Fire called with Direction: %s"), *Direction.ToString());
-	if (CollisionComponent)
+	if (ProjectileMovement)
 	{
-		CollisionComponent->AddImpulse(Direction * LaunchImpulse);
-		UE_LOG(LogTemp, Warning, TEXT("Impulse applied: %f"), LaunchImpulse);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("CollisionComponent is null in Fire!"));
+		ProjectileMovement->Velocity = Direction * ProjectileMovement->InitialSpeed;
+		ProjectileMovement->Activate();
+		UE_LOG(LogTemp, Warning, TEXT("Projectile Activated with Speed: %f"), ProjectileMovement->InitialSpeed);
 	}
 }
 
 void ARopeHookActor::FireVelocity(const FVector& Velocity)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Hook FireVelocity called: %s"), *Velocity.ToString());
-	if (CollisionComponent)
+	if (ProjectileMovement)
 	{
-		// SetVelocity directly for precise control
-		CollisionComponent->SetPhysicsLinearVelocity(Velocity);
+		ProjectileMovement->Velocity = Velocity;
+		ProjectileMovement->Activate();
 	}
 }
 
@@ -95,12 +104,12 @@ void ARopeHookActor::HandleHookImpact(UPrimitiveComponent* HitComp, AActor* Othe
 	bImpacted = true;
 	ImpactResult = Hit;
 
-	// Stop physics
-	if (CollisionComponent)
+	// Stop projectile
+	if (ProjectileMovement)
 	{
-		CollisionComponent->SetSimulatePhysics(false);
-		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		UE_LOG(LogTemp, Warning, TEXT("Physics stopped on hook."));
+		ProjectileMovement->StopMovementImmediately();
+		ProjectileMovement->SetComponentTickEnabled(false);
+		UE_LOG(LogTemp, Warning, TEXT("Projectile movement stopped on hook."));
 	}
 
 	// Attach to hit object (only if it's not us!)

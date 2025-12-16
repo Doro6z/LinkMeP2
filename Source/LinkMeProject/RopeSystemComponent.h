@@ -207,20 +207,11 @@ public:
 	);
 
 	// ===================================================================
-	// WRAPPING LOGIC - Native Implementation
+	// WRAPPING LOGIC
 	// ===================================================================
-
-    /**
-     * Checks if the rope segment wraps around an obstacle.
-     * @param StartPos The start point of the segment.
-     * @param TargetPos The end point of the segment.
-     * @return True if a wrap occurred and a bend point was added.
-     */
-	UFUNCTION(BlueprintCallable, Category="Rope|Physics")
-	bool CheckForWrapping(const FVector& StartPos, const FVector& TargetPos);
-
-	UFUNCTION(BlueprintCallable, Category="Rope|Physics")
-    bool CheckForUnwrapping(const FVector& TargetPos);
+	
+	// Native CheckForWrapping/Unwrapping removed in favor of Blueprint Logic
+	// Use CapsuleSweepBetween and AddBendPoint directly in BP.
 
 	// ===================================================================
 	// STATE ACCESS - Read-Only
@@ -251,7 +242,11 @@ public:
 	// EVENTS - Blueprint Implementable
 	// ===================================================================
 
-	/** Called every tick when rope is attached. Implement wrap/unwrap logic here. */
+	/** Called every tick when rope is Flying. Implement collision/wrap and tension logic here. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Rope|Events")
+	void OnRopeTickFlying(float DeltaTime);
+
+	/** Called every tick when rope is Attached. Implement wrap/unwrap logic here. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Rope|Events")
 	void OnRopeTickAttached(float DeltaTime);
 
@@ -262,6 +257,18 @@ public:
 	/** Called when rope is severed. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Rope|Events")
 	void OnRopeSevered();
+
+	// ===================================================================
+	// PHYSICS HELPERS
+	// ===================================================================
+
+	/** 
+	 * Applique une contrainte dure sur le Hook s'il dépasse MaxLength.
+	 * Modifie la position et la vélocité du HookActor.
+	 * À appeler dans OnRopeTickFlying.
+	 */
+	UFUNCTION(BlueprintCallable, Category="Rope|Physics")
+	void EnforceRopeLengthConstraint();
 
 	// ===================================================================
 	// CONFIGURATION
