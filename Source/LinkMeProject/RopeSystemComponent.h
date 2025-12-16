@@ -207,6 +207,22 @@ public:
 	);
 
 	// ===================================================================
+	// WRAPPING LOGIC - Native Implementation
+	// ===================================================================
+
+    /**
+     * Checks if the rope segment wraps around an obstacle.
+     * @param StartPos The start point of the segment.
+     * @param TargetPos The end point of the segment.
+     * @return True if a wrap occurred and a bend point was added.
+     */
+	UFUNCTION(BlueprintCallable, Category="Rope|Physics")
+	bool CheckForWrapping(const FVector& StartPos, const FVector& TargetPos);
+
+	UFUNCTION(BlueprintCallable, Category="Rope|Physics")
+    bool CheckForUnwrapping(const FVector& TargetPos);
+
+	// ===================================================================
 	// STATE ACCESS - Read-Only
 	// ===================================================================
 

@@ -52,3 +52,19 @@ debugimvgvid/
 
 # Packaging builds
 Packaging/
+Feed/Beta_Release_Notes.md
+Feed/BP_CheckForUnwrap_Advanced.txt
+Feed/BP_CheckForUnwrap_Robust.txt
+Feed/BP_CheckForWrap_Advanced.txt
+Feed/Community_Topic_Draft.md
+Feed/DevLog_Draft.md
+Feed/LoopAdvanced_Bp_Logic_Walkthrough.md
+Feed/ludus_config.json
+Feed/PatchNotes/Patch_6.2_RopeRefinement.md
+Feed/PatchNotes/Patch_6.3_BlueprintRefactor.md
+Feed/Project_Page_Description.md
+Feed/RopeSystemDocumentation.md
+PLAN.md
+.agent/workflows/phase-code.md
+.agent/workflows/phase-plan.md
+.agent/workflows/phase-archi.md

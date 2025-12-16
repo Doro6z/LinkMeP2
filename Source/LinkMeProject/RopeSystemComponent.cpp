@@ -57,39 +57,66 @@ void URopeSystemComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 	// Lightweight visual updates only
 	if (RopeState == ERopeState::Idle) return;
 
-	// Standard Physics Tick (Fix Stutter)
-	if (GetOwner() && GetOwner()->HasAuthority() && RopeState == ERopeState::Attached)
-	{
-        // Guard against massive lag spikes
-        if (DeltaTime <= 0.1f)
+    // --- WRAPPING LOGIC (Native) ---
+    if (GetOwner()->HasAuthority())
+    {
+        if (RopeState == ERopeState::Flying && CurrentHook)
         {
-		    PerformPhysics(DeltaTime);
+            // Flying Wraps: Check between LastFixedPoint and Hook
+            // In Flying, BendPoints ordered Player -> Hook. 
+            // Start is Last Bend or Player. Target is Hook.
+            FVector StartPos = BendPoints.Num() > 0 ? BendPoints.Last() : GetOwner()->GetActorLocation();
+            CheckForWrapping(StartPos, CurrentHook->GetActorLocation());
+            
+            // Server: Check for hook impact
+            if (CurrentHook->HasImpacted())
+            {
+                TransitionToAttached(CurrentHook->GetImpactResult());
+            }
+            
+            // Note: UpdateRopeVisual handles the Flying render (Hook -> Player)
+            // But if we wrapped, we have bends. 
+            // We need to ensure UpdateRopeVisual knows about the Hook position for the last segment.
+            // Currently it probably uses Player for last segment? 
+            // Let's check UpdateRopeVisual.
         }
-	}
-
-	if (RopeState == ERopeState::Flying)
-	{
-		// Server: Check for hook impact
-		if (GetOwner()->HasAuthority() && CurrentHook && CurrentHook->HasImpacted())
-		{
-			TransitionToAttached(CurrentHook->GetImpactResult());
-		}
-	}
-
-	if (RopeState == ERopeState::Attached)
-	{
-		// Always update player position for visual smoothness
-		UpdatePlayerPosition();
-
-		// Debug HUD (non-spammy)
-		if (bShowDebug && GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(
-				1, 0.f, FColor::Yellow,
-				FString::Printf(TEXT("Rope Length: %.1f / %.1f | BendPoints: %d"), 
-					CurrentLength, MaxLength, BendPoints.Num()));
-		}
-	}
+        else if (RopeState == ERopeState::Attached)
+        {
+            // Standard Wrapping: Check between LastFixedPoint and Player
+            // Attached order: Anchor -> Bends -> Player
+            // LastFixed is BendPoints[Num-2] (because Num-1 is Player, moving)
+            if (BendPoints.Num() >= 2)
+            {
+                const FVector LastFixed = BendPoints[BendPoints.Num()-2];
+                const FVector PlayerPos = GetOwner()->GetActorLocation();
+                
+                // 1. Wrap
+                if (!CheckForWrapping(LastFixed, PlayerPos)) 
+                {
+                    // 2. Unwrap
+                    CheckForUnwrapping(PlayerPos);
+                }
+            }
+            
+            // Guard against massive lag spikes for physics
+            if (DeltaTime <= 0.1f)
+            {
+                PerformPhysics(DeltaTime);
+            }
+            
+            // Always update player position for visual smoothness
+		    UpdatePlayerPosition();
+		    
+		    // Debug HUD
+            if (bShowDebug && GEngine)
+            {
+                GEngine->AddOnScreenDebugMessage(
+                    1, 0.f, FColor::Yellow,
+                    FString::Printf(TEXT("Rope Length: %.1f / %.1f | BendPoints: %d"), 
+                        CurrentLength, MaxLength, BendPoints.Num()));
+            }
+        }
+    }
 
 	// Visual update (client + server)
 	UpdateRopeVisual();
@@ -586,7 +613,7 @@ void URopeSystemComponent::TransitionToAttached(const FHitResult& Hit)
     AActor* Owner = GetOwner();
     if (!Owner) return;
 
-    BendPoints.Reset();
+    // BendPoints.Reset(); // REMOVED: Preserve Flying Bends!
 
     FVector HookImpactPoint = Hit.ImpactPoint;
     FVector PlayerPosition = Owner->GetActorLocation();
@@ -665,15 +692,46 @@ void URopeSystemComponent::TransitionToAttached(const FHitResult& Hit)
     }
 
     // ==========================================================
-    // Final BendPoint setup
+    // Final BendPoint setup (Preserve Flying Wraps!)
     // ==========================================================
+    
+    // 1. Capture Flying Bends (Order: Near Player -> Near Hook)
+    TArray<FVector> FlyingBends = BendPoints;
+    TArray<FVector> FlyingNormals = BendPointNormals;
+    
+    // 2. Reset
+    BendPoints.Reset();
+    BendPointNormals.Reset();
+    
+    // 3. Add Anchor (Start)
     BendPoints.Add(CorrectedAnchor);
+    BendPointNormals.Add(Hit.ImpactNormal); // Anchor normal
+    
+    // 4. Append Flying Bends REVERSED (to match Order: Anchor -> Player)
+    for (int32 i = FlyingBends.Num() - 1; i >= 0; --i)
+    {
+        BendPoints.Add(FlyingBends[i]);
+        if (FlyingNormals.IsValidIndex(i))
+        {
+            BendPointNormals.Add(FlyingNormals[i]);
+        }
+        else
+        {
+             BendPointNormals.Add(FVector::UpVector);
+        }
+    }
+    
+    // 5. Add Player (End)
     BendPoints.Add(PlayerPosition);
+    BendPointNormals.Add(FVector::UpVector); // Player normal (dummy)
 
-    CurrentLength = FMath::Min(
-        MaxLength,
-        (PlayerPosition - CorrectedAnchor).Size()
-    );
+    // Calculate total length across all bends
+    float TotalDist = 0.f;
+    for (int32 i = 0; i < BendPoints.Num() - 1; ++i)
+    {
+        TotalDist += FVector::Dist(BendPoints[i], BendPoints[i+1]);
+    }
+    CurrentLength = FMath::Min(MaxLength, TotalDist);
 
     RopeState = ERopeState::Attached;
 
@@ -858,9 +916,17 @@ void URopeSystemComponent::UpdateRopeVisual()
     {
         if (CurrentHook && GetOwner())
         {
-            // Consistent Ordering: [Anchor/Hook] -> [Player]
-            PointsToRender.Add(CurrentHook->GetActorLocation());
+            // Flying Wraps Support
+            // Order: Player -> [Intermediate Bends] -> Hook
             PointsToRender.Add(GetOwner()->GetActorLocation());
+            
+            // Add any wrapped points
+            if (BendPoints.Num() > 0)
+            {
+               PointsToRender.Append(BendPoints);
+            }
+            
+            PointsToRender.Add(CurrentHook->GetActorLocation());
             
             bShouldRender = true;
             bIsDeploying = true; // Enable Dynamic RestLength
@@ -924,4 +990,61 @@ void URopeSystemComponent::UpdateRopeVisual()
 			DrawDebugLine(GetWorld(), PointsToRender[i], PointsToRender[i + 1], FColor::Green, false, -1.f, 0, 3.f);
 		}
 	}
+}
+
+// ===================================================================
+// WRAPPING LOGIC
+// ===================================================================
+
+bool URopeSystemComponent::CheckForWrapping(const FVector& StartPos, const FVector& TargetPos)
+{
+   // 1. Simple Trace
+    FHitResult Hit;
+    if (CapsuleSweepBetween(StartPos, TargetPos, Hit, 5.0f, true))
+    {
+        // 2. Refine Corner Position
+        FVector CornerPos = ComputeBendPointFromHit(Hit, 15.0f);
+        
+        // Filter: Is this point too close to previous ones?
+        if (FVector::DistSquared(CornerPos, StartPos) < FMath::Square(20.0f)) return false;
+        if (FVector::DistSquared(CornerPos, TargetPos) < FMath::Square(20.0f)) return false;
+
+        AddBendPointWithNormal(CornerPos, Hit.ImpactNormal);
+        return true;
+    }
+    return false;
+}
+
+bool URopeSystemComponent::CheckForUnwrapping(const FVector& TargetPos)
+{
+    // Need at least 1 intermediate bend point (Anchor... Bend... Player) to unwrap
+    // In Attached mode (where this is called), BendPoints has endpoints.
+    // [Anchor, Bend1, Bend2, Player] -> Num=4.
+    // We check Bend2 (Index Num-2).
+    // Prev is Bend1 (Index Num-3).
+    // If BendPoints.Num() < 3, no intermediate bends.
+    
+    if (BendPoints.Num() < 3) return false; 
+    
+    // Candidate to remove is the LAST INTERMEDIATE point
+    // Index: Num - 2 (since Num-1 is Player)
+    const int32 CandidateIdx = BendPoints.Num() - 2;
+    const FVector CandidatePos = BendPoints[CandidateIdx];
+    
+    // Previous Fixed (Bend before Candidate)
+    const int32 PrevIdx = CandidateIdx - 1;
+    const FVector PrevPos = BendPoints[PrevIdx];
+    
+    // Normal Check
+    FVector Normal = FVector::UpVector;
+    if (BendPointNormals.IsValidIndex(CandidateIdx)) Normal = BendPointNormals[CandidateIdx];
+    
+    // Should Unwrap?
+    if (ShouldUnwrapPhysical(PrevPos, CandidatePos, Normal, TargetPos))
+    {
+        RemoveBendPointAt(CandidateIdx);
+        return true;
+    }
+    
+    return false;
 }
