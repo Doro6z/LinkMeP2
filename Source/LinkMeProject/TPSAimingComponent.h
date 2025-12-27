@@ -4,9 +4,6 @@
 #include "AimingComponent.h"
 #include "TPSAimingComponent.generated.h"
 
-class USpringArmComponent;
-class UCameraComponent;
-
 /**
  * TPS Aiming Component with Over-The-Shoulder camera and target magnetism.
  * Designed for ergonomic third-person grappling hook gameplay.
@@ -26,9 +23,6 @@ public:
 	virtual FVector GetTargetLocation() const override;
 	virtual FVector GetAimDirection() const override;
 
-	/** Toggle between left and right shoulder */
-	UFUNCTION(BlueprintCallable, Category = "TPS Aiming")
-	void ToggleShoulderSwap();
 
 	/** Start Focus mode (activates camera effects) */
 	UFUNCTION(BlueprintCallable, Category = "TPS Aiming")
@@ -41,36 +35,6 @@ public:
 	/** Returns true if currently focusing (camera effects active) */
 	UFUNCTION(BlueprintPure, Category = "TPS Aiming")
 	bool IsFocusing() const { return bIsFocusing; }
-
-	/** Set the SpringArm to control for camera offset */
-	void SetOwningSpringArm(USpringArmComponent* InSpringArm);
-
-	/** Set the Camera component to control FOV */
-	void SetOwningCamera(UCameraComponent* InCamera);
-
-	// ===================================================================
-	// OTS CAMERA CONFIGURATION
-	// ===================================================================
-
-	/** Initial camera offset when not aiming (Right, Forward, Up) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TPS Camera")
-	FVector InitialCameraOffset = FVector(0, 80, 60);
-
-	/** Shoulder offset when aiming (Right, Forward, Up) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TPS Camera")
-	FVector AimingShoulderOffset = FVector(50, 60, -20);
-
-	/** Field of view when aiming */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TPS Camera", meta=(ClampMin="30", ClampMax="120"))
-	float AimingFOV = 70.0f;
-
-	/** Speed of FOV interpolation */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TPS Camera")
-	float FOVTransitionSpeed = 10.0f;
-
-	/** Speed of camera offset interpolation */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TPS Camera")
-	float CameraOffsetTransitionSpeed = 10.0f;
 
 	// ===================================================================
 	// MAGNETISM CONFIGURATION
@@ -97,16 +61,8 @@ public:
 	FName HookableTag = TEXT("Hookable");
 
 protected:
-	void UpdateOTSCamera(float DeltaTime);
 	void UpdateMagnetism(float DeltaTime);
 	AActor* FindBestMagnetismTarget(const FVector& CamLoc, const FVector& CamForward) const;
-
-protected:
-	UPROPERTY()
-	USpringArmComponent* SpringArm = nullptr;
-
-	UPROPERTY()
-	UCameraComponent* Camera = nullptr;
 
 	// Magnetism state
 	FVector MagnetizedTargetLocation;
@@ -115,8 +71,6 @@ protected:
 	UPROPERTY()
 	AActor* CurrentMagnetizedActor = nullptr;
 
-	// Camera state
-	float DefaultFOV = 90.0f;
-	bool bShoulderSwapped = false;
+	// Focus state
 	bool bIsFocusing = false;
 };

@@ -1,6 +1,11 @@
 ---
 description: Build LinkMeProject (Development Editor)
 ---
-1. Run the Unreal Build Tool for LinkMeProjectEditor
+1. Run the Unreal Build Tool via BuildHelper.bat
 // turbo
-2. & "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" LinkMeProjectEditor Win64 Development -Project="c:\Users\Corentin\Documents\Unreal Projects\LinkMeProject\LinkMeProject.uproject" -WaitMutex -FromMsBuild
+2. & "c:\Users\Corentin\Documents\Unreal Projects\LinkMeProject\BuildHelper.bat"
+
+> [!TIP]
+> To enable LiveCoding, append `-LiveCoding` to the command:
+> `& "c:\Users\Corentin\Documents\Unreal Projects\LinkMeProject\BuildHelper.bat" -LiveCoding`
+

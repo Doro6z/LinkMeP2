@@ -1,6 +1,4 @@
 #include "TPSAimingComponent.h"
-#include "GameFramework/SpringArmComponent.h"
-#include "Camera/CameraComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 
@@ -12,39 +10,12 @@ UTPSAimingComponent::UTPSAimingComponent()
 void UTPSAimingComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Auto-find SpringArm and Camera if not manually set
-	AActor* Owner = GetOwner();
-	if (Owner && !SpringArm)
-	{
-		SpringArm = Owner->FindComponentByClass<USpringArmComponent>();
-	}
-
-	if (Owner && !Camera)
-	{
-		Camera = Owner->FindComponentByClass<UCameraComponent>();
-	}
-
-	// Store default FOV
-	if (Camera)
-	{
-		DefaultFOV = Camera->FieldOfView;
-	}
-
-	// Initialize camera offset
-	if (SpringArm)
-	{
-		SpringArm->SocketOffset = InitialCameraOffset;
-	}
 }
 
 void UTPSAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	// Call base tick (performs basic line/sphere trace)
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	// Update OTS camera positioning
-	UpdateOTSCamera(DeltaTime);
 
 	// Update magnetism if aiming
 	if (bIsAiming)
@@ -58,36 +29,6 @@ void UTPSAimingComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 }
 
-void UTPSAimingComponent::UpdateOTSCamera(float DeltaTime)
-{
-	if (!SpringArm || !Camera) return;
-
-	// Camera effects only active when FOCUSING, not just aiming
-	FVector TargetOffset = bIsFocusing ? AimingShoulderOffset : InitialCameraOffset;
-
-	// Apply shoulder swap (flip Y axis)
-	if (bShoulderSwapped)
-	{
-		TargetOffset.Y = -TargetOffset.Y;
-	}
-
-	// Interpolate camera offset
-	SpringArm->SocketOffset = FMath::VInterpTo(
-		SpringArm->SocketOffset,
-		TargetOffset,
-		DeltaTime,
-		CameraOffsetTransitionSpeed
-	);
-
-	// Interpolate FOV (only when focusing)
-	float TargetFOV = bIsFocusing ? AimingFOV : DefaultFOV;
-	Camera->FieldOfView = FMath::FInterpTo(
-		Camera->FieldOfView,
-		TargetFOV,
-		DeltaTime,
-		FOVTransitionSpeed
-	);
-}
 
 void UTPSAimingComponent::UpdateMagnetism(float DeltaTime)
 {
@@ -229,24 +170,6 @@ FVector UTPSAimingComponent::GetAimDirection() const
 	return CamRot.Vector();
 }
 
-void UTPSAimingComponent::ToggleShoulderSwap()
-{
-	bShoulderSwapped = !bShoulderSwapped;
-}
-
-void UTPSAimingComponent::SetOwningSpringArm(USpringArmComponent* InSpringArm)
-{
-	SpringArm = InSpringArm;
-}
-
-void UTPSAimingComponent::SetOwningCamera(UCameraComponent* InCamera)
-{
-	Camera = InCamera;
-	if (Camera)
-	{
-		DefaultFOV = Camera->FieldOfView;
-	}
-}
 
 void UTPSAimingComponent::StartFocus()
 {
