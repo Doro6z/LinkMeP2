@@ -8,7 +8,6 @@
 #include "Components/InertialMovementComponent.h" // For FInertiaState
 #include "MonkeyTypes.h"
 
-
 #include "MonkeyAnimInstance.generated.h"
 
 // Forward declarations
@@ -60,7 +59,11 @@ public:
   /** Inertia-based lean state (Roll, Pitch, TorsoTwist) from
    * UInertialMovementComponent */
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Procedural")
-  FInertiaState InertiaState;
+  FBodyInertiaState BodyInertia;
+
+  /** Head Look state (Rotation) from UInertialMovementComponent */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Procedural")
+  FHeadLookState HeadLook;
 
   // ===================================================================
   // STRIDE WHEEL (Exposed to AnimGraph)

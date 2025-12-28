@@ -10,7 +10,6 @@
 #include "RopeCameraManager.h"
 #include "RopeSystemComponent.h"
 
-
 #include "CharacterRope.generated.h"
 
 // ============================================================================
@@ -307,6 +306,10 @@ protected:
 
   /** Check if there is room to stand up */
   bool CanStandUp() const;
+
+  /** Updates rotation settings (OrientToMovement vs ControllerYaw) based on
+   * Stance */
+  void UpdateRotationSettings(EMonkeyStance NewStance);
 
   /** Update Capsule Size based on Stance */
   void UpdateCapsuleSize(EMonkeyStance NewStance);

@@ -109,10 +109,11 @@ void UMonkeyAnimInstance::NativeUpdateAnimation(float DeltaSeconds) {
   // Copy Procedural Animation Data (single struct copy)
   ProceduralData = CachedCharacter->ProceduralData;
 
-  // Copy Inertia State from InertialMovementComponent (Phase 2)
+  // Copy Inertia State from InertialMovementComponent (Phase 2 - Updated V2)
   if (UInertialMovementComponent *InertialComp =
           CachedCharacter->InertialMovementComp) {
-    InertiaState = InertialComp->GetInertiaState();
+    BodyInertia = InertialComp->GetBodyInertia();
+    HeadLook = InertialComp->GetHeadLook();
   }
 }
 

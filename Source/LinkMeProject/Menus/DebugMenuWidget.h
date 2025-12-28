@@ -92,6 +92,35 @@ public:
   UFUNCTION(BlueprintCallable, Category = "LinkMe|Debug")
   void ToggleCollisionViewer(bool bEnable);
 
+  // --- INERTIA DEBUG ---
+  /** Get character's current speed (horizontal) */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  float GetCharacterSpeed() const;
+
+  /** Get character's velocity as FVector */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  FVector GetCharacterVelocity() const;
+
+  /** Get character's local velocity (relative to facing) */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  FVector GetCharacterLocalVelocity() const;
+
+  /** Get character's movement direction in degrees (0 = forward, 90 = right) */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  float GetMovementDirection() const;
+
+  /** Get current lean roll value */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  float GetLeanRoll() const;
+
+  /** Get current lean pitch value */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  float GetLeanPitch() const;
+
+  /** Get current yaw rate (turning speed) */
+  UFUNCTION(BlueprintPure, Category = "LinkMe|Debug|Inertia")
+  float GetYawRate() const;
+
   // --- MAP SWITCHER ---
   UFUNCTION(BlueprintCallable, Category = "LinkMe|Debug")
   void OpenMap(FName MapName);

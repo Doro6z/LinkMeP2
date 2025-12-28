@@ -88,8 +88,29 @@ void ACharacterRope::Tick(float DeltaTime) {
   Super::Tick(DeltaTime);
 
   // Update Locomotion (Client & Server run this for prediction)
+  // Update Speed (Interpolate MaxWalkSpeed)
   UpdateLocomotionSpeed(DeltaTime);
 
+  // --- LOCOMOTION V2: QUADRUPED SMOOTH LOCK ---
+  // In Quad mode, we want the character to follow the camera (Strafe) but with
+  // a smooth delay (organic feel), avoiding the hard snap of
+  // UseControllerRotationYaw
+  if (CurrentStance == EMonkeyStance::Quadruped && IsLocallyControlled()) {
+    FRotator CurrentRot = GetActorRotation();
+    FRotator TargetRot = GetControlRotation();
+    TargetRot.Pitch = 0.f;
+    TargetRot.Roll = 0.f;
+
+    // Smoothly interpolate towards camera yaw
+    // InterpSpeed 5.0f gives a nice weight to the turn (less robotic)
+    FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 5.0f);
+    SetActorRotation(NewRot);
+  }
+
+  // Debug Visualization
+  // if (bShowDebug) {
+  //   DrawDebugHelpers(DeltaTime);
+  // }
   // Update Procedural Animation (IK, Lean, Swing, Landing)
   UpdateProceduralAnimation(DeltaTime);
 
@@ -484,8 +505,9 @@ bool ACharacterRope::CanStandUp() const {
   Params.AddIgnoredActor(this);
 
   // Simple Line Trace for Ceiling
-  bool bHit =
-      GetWorld()->LineTraceTestByChannel(Start, End, ECC_Visibility, Params);
+  FHitResult Hit;
+  bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End,
+                                                   ECC_Visibility, Params);
 
   return !bHit;
 }
@@ -548,8 +570,29 @@ void ACharacterRope::LocalSetStance(EMonkeyStance NewStance) {
   // Trigger Event for AnimBP / VFX
   OnStanceChanged.Broadcast(OldStance, NewStance);
 
-  // Update Capsule Physics/Viz
+  // Update Capsule and Mesh
   UpdateCapsuleSize(NewStance);
+
+  // Update Rotation Settings (Locomotion V2)
+  UpdateRotationSettings(NewStance);
+}
+
+void ACharacterRope::UpdateRotationSettings(EMonkeyStance NewStance) {
+  if (NewStance == EMonkeyStance::Biped) {
+    // BIPED: Free Look (Acrobatic)
+    // Character moves where input goes, Camera is free
+    bUseControllerRotationYaw = false; // Don't snap to camera
+    GetCharacterMovement()->bOrientRotationToMovement =
+        true; // Turn to face movement
+  } else {
+    // QUADRUPED: Strafe / Combat
+    // Character faces camera direction (for shooting/strafing)
+    // BUT we disable UseControllerRotationYaw to do it manually in Tick (Smooth
+    // Lock)
+    bUseControllerRotationYaw = false;
+    GetCharacterMovement()->bOrientRotationToMovement =
+        false; // We handle rotation
+  }
 }
 
 void ACharacterRope::OnRep_CurrentStance(EMonkeyStance OldStance) {
@@ -755,11 +798,11 @@ void ACharacterRope::UpdateProceduralAnimation(float DeltaTime) {
 
   // ----- INERTIAL BANKING & ACCELERATION TILT -----
   if (InertialMovementComp) {
-    const FInertiaState &State = InertialMovementComp->GetInertiaState();
+    const FBodyInertiaState &State = InertialMovementComp->GetBodyInertia();
     ProceduralData.LeanAmount.Roll = State.LeanRoll;
     ProceduralData.LeanAmount.Pitch = State.LeanPitch;
     ProceduralData.LeanAmount.Yaw =
-        State.TorsoTwistYaw; // or 0.f if twist is handled separately
+        State.TorsoTwistYaw; // Using TorsoTwist for LookAt logic if needed
   }
 
   // ----- SWING PHASE (TODO: Integrate with RopeSystem) -----

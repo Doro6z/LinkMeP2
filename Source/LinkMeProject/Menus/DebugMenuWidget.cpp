@@ -318,3 +318,82 @@ void UDebugMenuWidget::OpenMap(FName MapName) {
     UGameplayStatics::OpenLevel(GetWorld(), MapName);
   }
 }
+
+// ============================================================================
+// INERTIA DEBUG
+// ============================================================================
+
+float UDebugMenuWidget::GetCharacterSpeed() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC || !PC->GetPawn())
+    return 0.f;
+
+  return PC->GetPawn()->GetVelocity().Size2D();
+}
+
+FVector UDebugMenuWidget::GetCharacterVelocity() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC || !PC->GetPawn())
+    return FVector::ZeroVector;
+
+  return PC->GetPawn()->GetVelocity();
+}
+
+FVector UDebugMenuWidget::GetCharacterLocalVelocity() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC || !PC->GetPawn())
+    return FVector::ZeroVector;
+
+  return PC->GetPawn()->GetActorTransform().InverseTransformVector(
+      PC->GetPawn()->GetVelocity());
+}
+
+float UDebugMenuWidget::GetMovementDirection() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC || !PC->GetPawn())
+    return 0.f;
+
+  FVector LocalVel = PC->GetPawn()->GetActorTransform().InverseTransformVector(
+      PC->GetPawn()->GetVelocity());
+
+  // Calculate angle: atan2(Y, X) gives angle relative to forward
+  // 0 = Forward, 90 = Right, -90 = Left, 180 = Back
+  return FMath::RadiansToDegrees(FMath::Atan2(LocalVel.Y, LocalVel.X));
+}
+
+float UDebugMenuWidget::GetLeanRoll() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC)
+    return 0.f;
+
+  if (ACharacterRope *MyChar = Cast<ACharacterRope>(PC->GetPawn())) {
+    if (MyChar->InertialMovementComp) {
+      return MyChar->InertialMovementComp->GetBodyInertia().LeanRoll;
+    }
+  }
+  return 0.f;
+}
+
+float UDebugMenuWidget::GetLeanPitch() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC)
+    return 0.f;
+
+  if (ACharacterRope *MyChar = Cast<ACharacterRope>(PC->GetPawn())) {
+    if (MyChar->InertialMovementComp) {
+      return MyChar->InertialMovementComp->GetBodyInertia().LeanPitch;
+    }
+  }
+  return 0.f;
+}
+
+float UDebugMenuWidget::GetYawRate() const {
+  APlayerController *PC = GetOwningPlayer();
+  if (!PC || !PC->GetPawn())
+    return 0.f;
+
+  // YawRate is calculated from rotation delta / time
+  // For now, we return 0 as it's not exposed - will need to add to component
+  // TODO: Expose CachedYawRate from InertialMovementComponent
+  return 0.f;
+}
